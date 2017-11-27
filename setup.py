@@ -31,7 +31,7 @@ setup(
     author="Feng Zhu",
     author_email='fengzhu@usc.edu',
     url='https://github.com/fzhu2e/p2k',
-    packages=find_packages(include=['p2k']),
+    packages=find_packages(),
     include_package_data=True,
     install_requires=requirements,
     license="MIT license",

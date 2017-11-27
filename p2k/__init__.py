@@ -11,7 +11,13 @@ from scipy import spatial
 import xarray as xr
 import netCDF4
 from datetime import datetime
+from pyleoclim import Spectral
+import matplotlib.pyplot as plt
+import seaborn as sns
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 
+from . import psm
 
 def lipd2pkl(lipd_file_dir, pkl_file_path):
     ''' Convert a bunch of PAGES2k LiPD files to a pickle file to boost the speed of loading data
@@ -155,28 +161,122 @@ def load_CESM_netcdf(path, var_list):
     return var_fields
 
 
-def annualize(var_field, year):
+def annualize(var_field, year, weights=None):
     ''' Annualize the variable field, whose first axis must be time
 
     Args:
         var_field (3d array): the 3D field of the variable
+        year (array): time axis [year in float]
 
     Returns:
         var_ann (3d arrary): the annualized field
-        year_set (array): the set of the years
+        year_int (array): the set of the years in integers [year in int]
     '''
-    year_set = list(set(np.floor(year)))
-    n_year = len(year_set)
+    year_int = list(set(np.floor(year)))
+    n_year = len(year_int)
     var_ann = np.ndarray(shape=(n_year, *var_field.shape[1:]))
 
-    year_set_pad = list(year_set)
-    year_set_pad.append(np.max(year_set)+1)
+    year_int_pad = list(year_int)
+    year_int_pad.append(np.max(year_int)+1)
 
     for i in range(n_year):
-        t_start = year_set_pad[i]
-        t_end = year_set_pad[i+1]
+        t_start = year_int_pad[i]
+        t_end = year_int_pad[i+1]
         t_range = (year>=t_start) & (year<t_end)
 
-        var_ann[i,:,:] = np.mean(var_field[t_range, :, :], axis=0)
+        if weights is None:
+            var_ann[i] = np.average(var_field[t_range], axis=0, weights=None)
+        else:
+            var_ann[i] = np.average(var_field[t_range], axis=0, weights=weights[t_range])
 
-    return var_ann, year_set
+
+    return var_ann, year_int
+
+
+def df2betas(df):
+    ''' Calculate scaling exponents of a Pandas DataFrame dataset
+
+    Args:
+        df (Pandas DataFrame): the converted Pandas DataFrame
+
+    Returns:
+        betas (array): the scaling exponents
+
+    '''
+
+
+def plot_sites(df, title=None, lon_col='geo_meanLon', lat_col='geo_meanLat', archiveType_col='archiveType',
+               title_size=20, title_weight='bold', figsize=[16, 16], projection=ccrs.Robinson(), markersize=50,
+               plot_legend=True, legend_ncol=1, legend_anchor=(0, -0.2), legend_fontsize=15, ax=None):
+    ''' Plot the location of the sites on a map.
+
+    Args:
+        df (Pandas DataFrame): the converted Pandas DataFrame
+
+    Returns:
+        fig (Figure): the map plot of the sites
+
+    '''
+
+    archive_types = ['bivalve',
+                    'borehole',
+                    'coral',
+                    'documents',
+                    'glacier ice',
+                    'hybrid',
+                    'lake sediment',
+                    'marine sediment',
+                    'sclerosponge',
+                    'speleothem',
+                    'tree',
+                    ]
+    markers = ['D', 'v', 'o', '+', 'd', '*', 's', 's', '>', 'x', '^']
+    markers_dict = dict(zip(archive_types, markers))
+    colors = [np.array([ 1.        ,  0.83984375,  0.        ]),
+              np.array([ 0.73828125,  0.71484375,  0.41796875]),
+              np.array([ 1.        ,  0.546875  ,  0.        ]),
+              np.array([ 0.41015625,  0.41015625,  0.41015625]),
+              np.array([ 0.52734375,  0.8046875 ,  0.97916667]),
+              np.array([ 0.        ,  0.74609375,  1.        ]),
+              np.array([ 0.25390625,  0.41015625,  0.87890625]),
+              np.array([ 0.54296875,  0.26953125,  0.07421875]),
+              np.array([ 1         ,           0,           0]),
+              np.array([ 1.        ,  0.078125  ,  0.57421875]),
+              np.array([ 0.1953125 ,  0.80078125,  0.1953125 ])]
+    colors_dict = dict(zip(archive_types, colors))
+
+    if ax is None:
+        fig = plt.figure(figsize=figsize)
+        ax = plt.subplot(projection=projection)
+
+    sns.set(style="ticks", font_scale=1.5)
+
+    # plot map
+    if title is not None:
+        plt.title(title, fontsize=title_size, fontweight=title_weight)
+
+    ax.set_global()
+    ax.add_feature(cfeature.LAND, facecolor='gray', alpha=0.3)
+    ax.gridlines(edgecolor='gray', linestyle=':')
+
+    s_plots = []
+    df_archiveType_set = np.unique(df[archiveType_col])
+    for type_name in df_archiveType_set:
+        selector = df[archiveType_col] == type_name
+        s_plots.append(
+            ax.scatter(
+                df[selector][lon_col], df[selector][lat_col], marker=markers_dict[type_name],
+                c=colors_dict[type_name], edgecolor='k', s=markersize, transform=ccrs.Geodetic()
+            )
+        )
+
+    if plot_legend:
+        # plot legend
+        lgnd = plt.legend(s_plots, df_archiveType_set,
+                          scatterpoints=1,
+                          bbox_to_anchor=legend_anchor,
+                          loc='lower left',
+                          ncol=legend_ncol,
+                          fontsize=legend_fontsize)
+
+    return ax
