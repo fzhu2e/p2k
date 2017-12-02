@@ -17,3 +17,4 @@ Features
 * Annualize CESM data
 * Find the CESM grid at the cloest location based on given lat/lon
 * Proxy System Modeling - Icecore
+* Plottings: beta map, beta distribution for each archive, psd ensemble plot

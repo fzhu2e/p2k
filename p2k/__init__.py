@@ -11,13 +11,52 @@ from scipy import spatial
 import xarray as xr
 import netCDF4
 from datetime import datetime
-from pyleoclim import Spectral
+
 import matplotlib.pyplot as plt
+from matplotlib.ticker import ScalarFormatter, FormatStrFormatter
+from matplotlib.colors import Normalize, ListedColormap
 import seaborn as sns
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
+from tqdm import tqdm
+import pickle
+
+from pyleoclim import Spectral, Timeseries
+
 from . import psm
+
+class PAGES2k(object):
+    ''' A bunch of PAGES2k style settings
+    '''
+    archive_types = ['bivalve',
+                    'borehole',
+                    'coral',
+                    'documents',
+                    'glacier ice',
+                    'hybrid',
+                    'lake sediment',
+                    'marine sediment',
+                    'sclerosponge',
+                    'speleothem',
+                    'tree',
+                    ]
+    markers = ['p', 'p', 'o', 'v', 'd', '*', 's', 's', '8', 'D', '^']
+    #  markers = ['D', 'v', 'o', '+', 'd', '*', 's', 's', '>', 'x', '^']
+    markers_dict = dict(zip(archive_types, markers))
+    colors = [np.array([ 1.        ,  0.83984375,  0.        ]),
+              np.array([ 0.73828125,  0.71484375,  0.41796875]),
+              np.array([ 1.        ,  0.546875  ,  0.        ]),
+              np.array([ 0.41015625,  0.41015625,  0.41015625]),
+              np.array([ 0.52734375,  0.8046875 ,  0.97916667]),
+              np.array([ 0.        ,  0.74609375,  1.        ]),
+              np.array([ 0.25390625,  0.41015625,  0.87890625]),
+              np.array([ 0.54296875,  0.26953125,  0.07421875]),
+              np.array([ 1         ,           0,           0]),
+              np.array([ 1.        ,  0.078125  ,  0.57421875]),
+              np.array([ 0.1953125 ,  0.80078125,  0.1953125 ])]
+    colors_dict = dict(zip(archive_types, colors))
+
 
 def lipd2pkl(lipd_file_dir, pkl_file_path):
     ''' Convert a bunch of PAGES2k LiPD files to a pickle file to boost the speed of loading data
@@ -58,6 +97,10 @@ def lipd2pkl(lipd_file_dir, pkl_file_path):
     df = df_tmp.dropna(how='all')
 
     print('p2k >>> Saving pickle file at: {}'.format(pkl_file_path))
+    dir_name = os.path.dirname(pkl_file_path)
+    if not os.path.exists(dir_name):
+        os.makedirs(dir_name)
+
     df.to_pickle(pkl_file_path)
     print('p2k >>> DONE')
 
@@ -193,66 +236,179 @@ def annualize(var_field, year, weights=None):
     return var_ann, year_int
 
 
-def df2betas(df):
-    ''' Calculate scaling exponents of a Pandas DataFrame dataset
+def df2psd(df, freqs, save_path=None):
+    ''' Calculate the power spectral densities of a Pandas DataFrame PAGES2k dataset using WWZ method
 
     Args:
-        df (Pandas DataFrame): the converted Pandas DataFrame
+        df (Pandas DataFrame): a Pandas DataFrame
+        freqs (array): frequency vector for spectral analysis
+        save_path (str): if set, save the PSD result to the given path
 
     Returns:
-        betas (array): the scaling exponents
+        psds (2d array): the scaling exponents
 
     '''
+    paleoData_values = df['paleoData_values'].values
+    year = df['year'].values
+
+    n_series = len(year)
+    n_freqs = np.size(freqs)
+    psds = np.ndarray(shape=(n_series, n_freqs))
+
+    for k in tqdm(range(n_series), desc='Processing time series'):
+        Xo = np.asarray(paleoData_values[k], dtype=np.float)
+        to = np.asarray(year[k], dtype=np.float)
+        Xo, to = Timeseries.clean_ts(Xo, to)
+        tau = np.linspace(np.min(to), np.max(to), 501)
+        psds[k, :], _, _, _ = Spectral.wwz_psd(Xo, to, freqs=freqs, tau=tau, c=1e-3, nproc=16, nMC=0)
+
+    if save_path:
+        print('p2k >>> Saving pickle file at: {}'.format(save_path))
+
+        dir_name = os.path.dirname(save_path)
+        if not os.path.exists(dir_name):
+            os.makedirs(dir_name)
+
+        with open(save_path, 'wb') as f:
+            pickle.dump(psds, f)
+
+        print('p2k >>> DONE')
+
+    return psds
+
+
+def df_append_beta(df, freqs, psds=None, save_path=None,
+                   period_ranges=[(1/200, 1/20), (1/8, 1/2)], period_names=['beta_D', 'beta_I']
+                   ):
+    ''' Calculate the scaling exponent and add to a new column in the given DataFrame
+
+    Args:
+        df (Pandas DataFrame): a Pandas DataFrame
+        freqs (array): frequency vector for spectral analysis
+
+    Returns:
+        df_new (Pandas DataFrame): the DataFrame with scaling exponents added on
+
+    '''
+    if psds is None:
+        psds = df2psd(df, freqs)
+
+    df_new = df.copy()
+    for i, period_range in enumerate(period_ranges):
+
+        beta_list = []
+        for psd in psds:
+            beta, f_binned, psd_binned, Y_reg = Spectral.beta_estimation(psd, freqs, period_range[0], period_range[1])
+            beta_list.append(beta)
+
+        df_new[period_names[i]] = beta_list
+
+    if save_path:
+        print('p2k >>> Saving pickle file at: {}'.format(save_path))
+        dir_name = os.path.dirname(save_path)
+        if not os.path.exists(dir_name):
+            os.makedirs(dir_name)
+
+        df_new.to_pickle(save_path)
+        print('p2k >>> DONE')
+
+    return df_new
+
+
+def plot_psds(psds, freqs, archive_type='glacier ice',
+              period_ranges=[(1/200, 1/20), (1/8, 1/2)], period_names=[r'$\beta_D$', r'$\beta_I$'],
+              period_ticks=[2, 5, 10, 20, 50, 100, 200, 500], title=None,
+              figsize=[8, 8], ax=None, ylim=[1e-3, 1e4]):
+    ''' Plot PSDs with scaling slopes
+
+    Args:
+        psds (2d array): a Pandas DataFrame
+        freqs (array): frequency vector for spectral analysis
+        period_ranges (list of tuples): the period range over which to calculate the scaling slope
+
+    Returns:
+        ax (Axes): the PSD plot
+
+    '''
+
+    p = PAGES2k()
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+
+    sns.set(style="darkgrid", font_scale=2)
+
+    for i, psd in enumerate(psds):
+        plt.plot(1/freqs, psd, color=p.colors_dict[archive_type], alpha=0.3)
+
+
+    # plot the median of psds
+    ax.set_xscale('log', nonposy='clip')
+    ax.set_yscale('log', nonposy='clip')
+    psd_med = np.nanmedian(psds, axis=0)
+    ax.plot(1/freqs, psd_med, '-', color=sns.xkcd_rgb['denim blue'], label='Median')
+
+    n_pr = len(period_ranges)
+    f_binned_list = []
+    Y_reg_list = []
+    beta_list = []
+
+    for period_range in period_ranges:
+        beta, f_binned, psd_binned, Y_reg = Spectral.beta_estimation(psd_med, freqs, period_range[0], period_range[1])
+        f_binned_list.append(f_binned)
+        Y_reg_list.append(Y_reg)
+        beta_list.append(beta)
+
+    for i in range(n_pr):
+        if i == 0:
+            label = ''
+            for j in range(n_pr):
+                if j < n_pr-1:
+                    label += period_names[j]+' = {:.2f}, '.format(beta_list[j])
+                else:
+                    label += period_names[j]+' = {:.2f}'.format(beta_list[j])
+
+            ax.plot(1/f_binned_list[i], Y_reg_list[i], color='k', label=label)
+        else:
+            ax.plot(1/f_binned_list[i], Y_reg_list[i], color='k')
+
+    ax.set_ylim(ylim)
+
+    if title:
+        ax.set_title(title, fontweight='bold')
+
+    ax.set_ylabel('Spectral Density')
+    ax.set_xlabel('Period (year)')
+    ax.set_xticks(period_ticks)
+    ax.get_xaxis().set_major_formatter(ScalarFormatter())
+    ax.xaxis.set_major_formatter(FormatStrFormatter('%g'))
+    ax.set_xlim([np.min(period_ticks), np.max(period_ticks)])
+    plt.gca().invert_xaxis()
+    ax.legend()
+
+    return ax
 
 
 def plot_sites(df, title=None, lon_col='geo_meanLon', lat_col='geo_meanLat', archiveType_col='archiveType',
-               title_size=20, title_weight='bold', figsize=[16, 16], projection=ccrs.Robinson(), markersize=50,
-               plot_legend=True, legend_ncol=1, legend_anchor=(0, -0.2), legend_fontsize=15, ax=None):
+               title_size=20, title_weight='bold', figsize=[10, 8], projection=ccrs.Robinson(), markersize=50,
+               plot_legend=True, legend_ncol=4, legend_anchor=(0, -0.3), legend_fontsize=15, ax=None):
     ''' Plot the location of the sites on a map.
 
     Args:
-        df (Pandas DataFrame): the converted Pandas DataFrame
+        df (Pandas DataFrame): the Pandas DataFrame
 
     Returns:
-        fig (Figure): the map plot of the sites
+        ax (Axes): the map plot of the sites
 
     '''
-
-    archive_types = ['bivalve',
-                    'borehole',
-                    'coral',
-                    'documents',
-                    'glacier ice',
-                    'hybrid',
-                    'lake sediment',
-                    'marine sediment',
-                    'sclerosponge',
-                    'speleothem',
-                    'tree',
-                    ]
-    markers = ['D', 'v', 'o', '+', 'd', '*', 's', 's', '>', 'x', '^']
-    markers_dict = dict(zip(archive_types, markers))
-    colors = [np.array([ 1.        ,  0.83984375,  0.        ]),
-              np.array([ 0.73828125,  0.71484375,  0.41796875]),
-              np.array([ 1.        ,  0.546875  ,  0.        ]),
-              np.array([ 0.41015625,  0.41015625,  0.41015625]),
-              np.array([ 0.52734375,  0.8046875 ,  0.97916667]),
-              np.array([ 0.        ,  0.74609375,  1.        ]),
-              np.array([ 0.25390625,  0.41015625,  0.87890625]),
-              np.array([ 0.54296875,  0.26953125,  0.07421875]),
-              np.array([ 1         ,           0,           0]),
-              np.array([ 1.        ,  0.078125  ,  0.57421875]),
-              np.array([ 0.1953125 ,  0.80078125,  0.1953125 ])]
-    colors_dict = dict(zip(archive_types, colors))
-
+    p = PAGES2k()
     if ax is None:
         fig = plt.figure(figsize=figsize)
         ax = plt.subplot(projection=projection)
 
-    sns.set(style="ticks", font_scale=1.5)
+    sns.set(style="ticks", font_scale=2)
 
     # plot map
-    if title is not None:
+    if title:
         plt.title(title, fontsize=title_size, fontweight=title_weight)
 
     ax.set_global()
@@ -265,8 +421,8 @@ def plot_sites(df, title=None, lon_col='geo_meanLon', lat_col='geo_meanLat', arc
         selector = df[archiveType_col] == type_name
         s_plots.append(
             ax.scatter(
-                df[selector][lon_col], df[selector][lat_col], marker=markers_dict[type_name],
-                c=colors_dict[type_name], edgecolor='k', s=markersize, transform=ccrs.Geodetic()
+                df[selector][lon_col], df[selector][lat_col], marker=p.markers_dict[type_name],
+                c=p.colors_dict[type_name], edgecolor='k', s=markersize, transform=ccrs.Geodetic()
             )
         )
 
@@ -280,3 +436,193 @@ def plot_sites(df, title=None, lon_col='geo_meanLon', lat_col='geo_meanLat', arc
                           fontsize=legend_fontsize)
 
     return ax
+
+
+def plot_beta_map(df_beta,
+                  beta_I_name='beta_I', beta_I_title='Interannual Scaling Exponent',
+                  beta_D_name='beta_D', beta_D_title='Decadal to Centennial Scaling Exponent',
+                  hist_xlim=(-3, 6), nan_color='black',
+                  cmap="RdBu_r", vmin=-1.2, vmax=2.8, n_ticks=11, n_clr=15,
+                  color_range_start=5, color_range_end=None):
+    ''' Plot beta map for beta_I and beta_D with histogram plots
+
+    Args:
+        df_beta (Pandas DataFrame): the Pandas DataFrame with beta_I and beta_D
+
+    Returns:
+        fig (Figure): the beta plot
+
+    '''
+    color_norm = Normalize(vmin=vmin, vmax=vmax)
+    tick_range = np.linspace(vmin, vmax, n_ticks)
+
+    # set colormap
+    palette = sns.color_palette(cmap, n_clr)
+    palette_chosen = palette[color_range_start:color_range_end]
+    sns_cmap = ListedColormap(palette_chosen)
+    sns_cmap.set_bad(color='gray', alpha = 1.)
+
+    p = PAGES2k()
+    fig = plt.figure(figsize=[20, 10])
+    sns.set(style="ticks", font_scale=1.5)
+
+    # map 1
+    map1 = plt.subplot(2, 10, (1, 7), projection=ccrs.Robinson())
+    map1.set_title(beta_I_title)
+    map1.set_global()
+    map1.add_feature(cfeature.LAND, facecolor='gray', alpha=0.3)
+    map1.gridlines(edgecolor='gray', linestyle=':')
+
+    s_plots = []
+    cbar_added = False
+    for type_name in p.archive_types:
+
+        selector = df_beta['archiveType'] == type_name
+        color = df_beta[selector][beta_I_name].values
+        good_idx = ~np.isnan(color)
+        bad_idx = np.isnan(color)
+        lon = df_beta[selector]['geo_meanLon'].values
+        lat = df_beta[selector]['geo_meanLat'].values
+        if np.size(color[good_idx]) > 0:
+            sc = map1.scatter(
+                lon[good_idx], lat[good_idx], marker=p.markers_dict[type_name],
+                c=color[good_idx], edgecolor='k', s=100, transform=ccrs.Geodetic(), cmap=sns_cmap, norm=color_norm
+            )
+
+            s_plots.append(sc)
+
+            if not cbar_added:
+                cbar_added = True
+                cbar = plt.colorbar(mappable=sc, ax=map1, drawedges=True,
+                                    orientation='vertical', ticks=tick_range, fraction=0.05, pad=0.05)
+                cbar.ax.tick_params(axis='y', direction='in')
+                cbar.set_label(r'$\{}$'.format(beta_I_name))
+
+        if np.size(color[bad_idx]) > 0:
+            s_plots.append(map1.scatter(
+                    lon[bad_idx], lat[bad_idx], marker=p.markers_dict[type_name],
+                    c=nan_color, edgecolor='k', s=100, transform=ccrs.Geodetic(), cmap=sns_cmap
+                 ))
+
+    lgnd = plt.legend(s_plots, p.archive_types,
+                      scatterpoints=1,
+                      bbox_to_anchor=(-0.4, 1.1),
+                      loc='upper left',
+                      ncol=1,
+                      fontsize=17)
+
+    for i in range(len(p.archive_types)):
+        lgnd.legendHandles[i].set_color(nan_color)
+
+    # hist 1
+    hist1 = plt.subplot(2,10,(9,10))
+    hist1.set_title('Distribution', y=1.0)
+    beta_I_data = np.asarray(df_beta[beta_I_name].dropna())
+    hist1.set_title('median: {:.3f}'.format(np.median(beta_I_data)), loc='right', x=0.98, y=0.9)
+    g1 = sns.distplot(beta_I_data, kde=True, color="gray")
+    g1.set(xlim=hist_xlim)
+    plt.grid()
+
+    # map 2
+    map2 = plt.subplot(2, 10, (11, 17), projection=ccrs.Robinson())
+    map2.set_title('Decadal to Centennial Scaling Exponent')
+    map2.set_global()
+    map2.add_feature(cfeature.LAND, facecolor='gray', alpha=0.3)
+    map2.gridlines(edgecolor='gray', linestyle=':')
+
+    cbar_added = False
+    for type_name in p.archive_types:
+
+        selector = df_beta['archiveType'] == type_name
+        color = df_beta[selector][beta_D_name].values
+        good_idx = ~np.isnan(color)
+        bad_idx = np.isnan(color)
+        lon = df_beta[selector]['geo_meanLon'].values
+        lat = df_beta[selector]['geo_meanLat'].values
+        if np.size(color[good_idx]) > 0:
+            sc = map2.scatter(
+                    lon[good_idx], lat[good_idx], marker=p.markers_dict[type_name],
+                    c=color[good_idx], edgecolor='k', s=100, transform=ccrs.Geodetic(), cmap=sns_cmap, norm=color_norm
+            )
+            if not cbar_added:
+                cbar_added = True
+                cbar = plt.colorbar(mappable=sc, ax=map2, drawedges=True,
+                                    orientation='vertical', ticks=tick_range, fraction=0.05, pad=0.05)
+                cbar.ax.tick_params(axis='y', direction='in')
+                cbar.set_label(r'$\{}$'.format(beta_D_name))
+
+        if np.size(color[bad_idx]) > 0:
+            map2.scatter(
+                    lon[bad_idx], lat[bad_idx], marker=p.markers_dict[type_name],
+                    c=nan_color, edgecolor='k', s=100, transform=ccrs.Geodetic(), cmap=sns_cmap
+            )
+
+
+    # hist 2
+    hist2 = plt.subplot(2,10, (19,20))
+    hist2.set_title('Distribution', y=1.0)
+    beta_D_data = np.asarray(df_beta['beta_D'].dropna())
+    hist2.set_title('median: {:.3f}'.format(np.median(beta_D_data)), loc='right', x=0.98, y=0.9)
+    g2 = sns.distplot(beta_D_data, kde=True, color="gray")
+    g2.set(xlim=hist_xlim)
+    plt.grid()
+
+
+def plot_beta_hist(df_beta, archives,
+                   beta_I_name='beta_I',
+                   beta_D_name='beta_D',
+                   figsize=[10, 10], xlim=None, xticks=None,
+                   font_scale=1.5,
+                   grids=(1, 1)):
+    ''' Plot the histagram of beta_I and beta_D with KDE distributions for an archive
+
+    Args:
+        df_beta (Pandas DataFrame): the scaling exponents
+        archives (list of str): the list of the archives to plot
+        grids (a list of 3 integers): nRow, nCol, loc
+        [bivalve, borehole, coral, documents, glacier ice, hybrid,
+        lake sediment, marine sediment, sclerosponge, speleothem, tree]
+
+    Returns:
+        plot: a figure with the histagram of beta_I and beta_D with KDE distributions
+
+    '''
+    p = PAGES2k()
+    sns.set(style='darkgrid', font_scale=font_scale)
+    #plt.style.use('ggplot')
+    fig = plt.figure(figsize=figsize)
+
+    nRow, nCol = grids
+
+    for i, type_name in enumerate(archives):
+        print('Processing {}...'.format(type_name))
+
+        selector = df_beta['archiveType'] == type_name
+        color = p.colors_dict[type_name]
+
+        nr = df_beta[selector].count()[0]
+        hist = plt.subplot(nRow, nCol, i+1)
+        hist.set_title('{}, {} records'.format(type_name, nr), y=1.0, fontweight="bold")
+
+        beta_I = df_beta[selector][beta_I_name].dropna().values
+        beta_D = df_beta[selector][beta_D_name].dropna().values
+        med_I = np.median(beta_I)
+        med_D = np.median(beta_D)
+        n_I = np.size(beta_I)
+        n_D = np.size(beta_D)
+
+        g1 = sns.kdeplot(beta_I, shade=False, color=color, linestyle='--', label=r'$\{}$ ({} records)'.format(beta_I_name, n_I))
+        g1.axvline(x=med_I, ymin=0, ymax=0.1, linewidth=1, color=color, linestyle='--')
+        g2 = sns.kdeplot(beta_D, shade=False, color=color, linestyle='-', label=r'$\{}$ ({} records)'.format(beta_D_name, n_D))
+        g2.axvline(x=med_D, ymin=0, ymax=0.1, linewidth=1, color=color, linestyle='-')
+
+        if xlim:
+            g1.set(xlim=xlim)
+            g2.set(xlim=xlim)
+
+        if xticks:
+            g1.set(xticks=xticks)
+            g2.set(xticks=xticks)
+
+    fig.tight_layout()
+    return fig
