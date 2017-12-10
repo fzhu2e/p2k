@@ -130,12 +130,13 @@ def find_closest_loc(lat, lon, target_lat, target_lon):
         model_locations.append((m_lat, m_lon))
 
     # target locations
-    target_locations = list(zip(target_lat, target_lon))
-    target_locations = list(set(target_locations))  # remove duplicated locations
+    target_locations_dup = list(zip(target_lat, target_lon))
+    target_locations = list(set(target_locations_dup))  # remove duplicated locations
     n_loc = np.shape(target_locations)[0]
 
     lat_ind = np.zeros(n_loc, dtype=int)
     lon_ind = np.zeros(n_loc, dtype=int)
+    df_ind = np.zeros(n_loc, dtype=int)
 
     # get the closest grid
     for i, target_loc in enumerate(target_locations):
@@ -145,8 +146,9 @@ def find_closest_loc(lat, lon, target_lat, target_lon):
         closest = Y[index]
         lat_ind[i] = list(lat).index(closest[0])
         lon_ind[i] = list(lon).index(closest[1])
+        df_ind[i] = target_locations_dup.index(target_loc)
 
-    return lat_ind, lon_ind
+    return lat_ind, lon_ind, df_ind
 
 
 def load_CESM_netcdf(path, var_list):
@@ -236,7 +238,7 @@ def annualize(var_field, year, weights=None):
     return var_ann, year_int
 
 
-def df2psd(df, freqs, save_path=None):
+def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path=None):
     ''' Calculate the power spectral densities of a Pandas DataFrame PAGES2k dataset using WWZ method
 
     Args:
@@ -248,8 +250,8 @@ def df2psd(df, freqs, save_path=None):
         psds (2d array): the scaling exponents
 
     '''
-    paleoData_values = df['paleoData_values'].values
-    year = df['year'].values
+    paleoData_values = df[value_name].values
+    year = df[time_name].values
 
     n_series = len(year)
     n_freqs = np.size(freqs)
@@ -277,7 +279,7 @@ def df2psd(df, freqs, save_path=None):
     return psds
 
 
-def df_append_beta(df, freqs, psds=None, save_path=None,
+def df_append_beta(df, freqs, psds=None, save_path=None, value_name='paleoData_values', time_name='year',
                    period_ranges=[(1/200, 1/20), (1/8, 1/2)], period_names=['beta_D', 'beta_I']
                    ):
     ''' Calculate the scaling exponent and add to a new column in the given DataFrame
@@ -291,7 +293,7 @@ def df_append_beta(df, freqs, psds=None, save_path=None,
 
     '''
     if psds is None:
-        psds = df2psd(df, freqs)
+        psds = df2psd(df, freqs, value_name=value_name, time_name=value_name)
 
     df_new = df.copy()
     for i, period_range in enumerate(period_ranges):
@@ -377,7 +379,7 @@ def plot_psds(psds, freqs, archive_type='glacier ice',
         ax.set_title(title, fontweight='bold')
 
     ax.set_ylabel('Spectral Density')
-    ax.set_xlabel('Period (year)')
+    ax.set_xlabel('Period (years)')
     ax.set_xticks(period_ticks)
     ax.get_xaxis().set_major_formatter(ScalarFormatter())
     ax.xaxis.set_major_formatter(FormatStrFormatter('%g'))
@@ -486,10 +488,10 @@ def plot_beta_map(df_beta,
         if np.size(color[good_idx]) > 0:
             sc = map1.scatter(
                 lon[good_idx], lat[good_idx], marker=p.markers_dict[type_name],
-                c=color[good_idx], edgecolor='k', s=100, transform=ccrs.Geodetic(), cmap=sns_cmap, norm=color_norm
+                c=color[good_idx], edgecolor='k', s=100, transform=ccrs.Geodetic(), cmap=sns_cmap, norm=color_norm,
+                zorder=99
             )
 
-            s_plots.append(sc)
 
             if not cbar_added:
                 cbar_added = True
@@ -499,10 +501,12 @@ def plot_beta_map(df_beta,
                 cbar.set_label(r'$\{}$'.format(beta_I_name))
 
         if np.size(color[bad_idx]) > 0:
-            s_plots.append(map1.scatter(
-                    lon[bad_idx], lat[bad_idx], marker=p.markers_dict[type_name],
-                    c=nan_color, edgecolor='k', s=100, transform=ccrs.Geodetic(), cmap=sns_cmap
-                 ))
+            sc = map1.scatter(
+                lon[bad_idx], lat[bad_idx], marker=p.markers_dict[type_name],
+                c=nan_color, edgecolor='k', s=100, transform=ccrs.Geodetic(), cmap=sns_cmap
+            )
+
+        s_plots.append(sc)
 
     lgnd = plt.legend(s_plots, p.archive_types,
                       scatterpoints=1,
@@ -542,7 +546,8 @@ def plot_beta_map(df_beta,
         if np.size(color[good_idx]) > 0:
             sc = map2.scatter(
                     lon[good_idx], lat[good_idx], marker=p.markers_dict[type_name],
-                    c=color[good_idx], edgecolor='k', s=100, transform=ccrs.Geodetic(), cmap=sns_cmap, norm=color_norm
+                    c=color[good_idx], edgecolor='k', s=100, transform=ccrs.Geodetic(), cmap=sns_cmap, norm=color_norm,
+                    zorder=99
             )
             if not cbar_added:
                 cbar_added = True
