@@ -218,6 +218,7 @@ def annualize(var_field, year, weights=None):
         year_int (array): the set of the years in integers [year in int]
     '''
     year_int = list(set(np.floor(year)))
+    year_int = np.asarray(list(map(int, year_int)))
     n_year = len(year_int)
     var_ann = np.ndarray(shape=(n_year, *var_field.shape[1:]))
 
