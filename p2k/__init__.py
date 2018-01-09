@@ -15,12 +15,14 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter, FormatStrFormatter
 from matplotlib.colors import Normalize, ListedColormap
+from matplotlib import gridspec
 import seaborn as sns
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
 from tqdm import tqdm
 import pickle
+import warnings
 
 from pyleoclim import Spectral, Timeseries
 
@@ -631,4 +633,160 @@ def plot_beta_hist(df_beta, archives,
             g2.set(xticks=xticks)
 
     fig.tight_layout()
+    return fig
+
+
+def plot_wavelet_summary(df_row, freqs=None, tau=None, c1=1/(8*np.pi**2), c2=1e-3, nMC=200, nproc=8, detrend='no',
+                         gaussianize=False, standardize=True, levels=None,
+                         anti_alias=False, period_ticks=None,
+                         psd_lmstyle='-', psd_lim=None, period_I=[1/8, 1/2], period_D=[1/200, 1/20]):
+    """ Plot the time series with the wavelet analysis and psd
+
+    Args:
+        df_row (DateFrame): one row of a DataFrame
+        freqs (array): vector of frequency
+        tau (array): the evenly-spaced time points, namely the time shift for wavelet analysis
+        c (float): the decay constant
+        Neff (int): the threshold of the number of effective degree of freedom
+        nproc (int): fake argument, just for convenience
+        detrend (str): 'no' - the original time series is assumed to have no trend;
+                       'linear' - a linear least-squares fit to `ys` is subtracted;
+                       'constant' - the mean of `ys` is subtracted
+        psd_lmstyle (str): the line style in the psd plot
+        psd_lim (list): the limits for psd
+        period_I, period_D (list): the ranges for beta estimation
+
+    Returns:
+        fig (figure): the summary plot
+
+    """
+    p = PAGES2k()
+    title_font = {'fontname': 'Arial', 'size': '24', 'color': 'black', 'weight': 'normal', 'verticalalignment': 'bottom'}
+
+    ys = np.asarray(df_row['paleoData_values'], dtype=np.float)
+    ts = np.asarray(df_row['year'], dtype=np.float)
+    ys, ts = Timeseries.clean_ts(ys, ts)
+    dt_med = np.median(np.diff(ts))
+    ylim_min = dt_med*2
+    tau = np.linspace(np.min(ts), np.max(ts), 501)
+    freqs = np.linspace(1/1000, 1/2, 501)
+
+    if np.mean(np.diff(ts)) < 1:
+        warnings.warn('The time series will be annualized due to mean of dt less than one year.')
+        ys, ts = Timeseries.annualize(ys, ts)
+
+    if period_ticks is not None:
+        period_ticks = np.asarray(period_ticks)
+        gt_part = period_ticks[period_ticks >= ylim_min]
+        period_ticks = np.concatenate(([np.floor(ylim_min)], gt_part))
+
+    gs = gridspec.GridSpec(6, 12)
+    gs.update(wspace=0, hspace=0)
+
+    fig = plt.figure(figsize=(15, 15))
+
+    # plot the time series
+    sns.set(style="ticks", font_scale=1.5)
+    ax1 = plt.subplot(gs[0:1, :-3])
+    ax1.spines['right'].set_visible(False)
+    ax1.spines['top'].set_visible(False)
+    plt.plot(ts, ys, '-o', color=p.colors_dict[df_row['archiveType']])
+
+    plt.title(df_row['dataSetName']+' - '+df_row['archiveType'], **title_font)
+
+    plt.xlim([np.min(ts), np.max(ts)])
+    plt.ylabel('{} ({})'.format(df_row['paleoData_variableName'], df_row['paleoData_units']))
+
+    #  plt.grid()
+    plt.tick_params(axis='x', which='both', bottom='off', top='off', labelbottom='off')
+
+    # plot location
+    sns.set(style="ticks", font_scale=1.5)
+    ax_loc = plt.subplot(
+        gs[0:1, -3:],
+        projection=ccrs.NearsidePerspective(
+            central_longitude=df_row['geo_meanLon'],
+            central_latitude=df_row['geo_meanLat'],
+            satellite_height=1.5*1e7,
+        )
+    )
+
+    #  ax_loc = plt.subplot(gs[0:1, -3:], projection=ccrs.Robinson())
+
+    ax_loc.set_global()
+    ax_loc.add_feature(cfeature.LAND, facecolor='gray', alpha=0.3)
+    ax_loc.gridlines(edgecolor='gray', linestyle=':')
+
+    ax_loc.scatter(df_row['geo_meanLon'], df_row['geo_meanLat'], marker=p.markers_dict[df_row['archiveType']],
+                   c=p.colors_dict[df_row['archiveType']], edgecolor='k', s=50, transform=ccrs.Geodetic())
+    #  ax_loc.text(df_row['geo_meanLon']+40, df_row['geo_meanLat'], 'lon: {}\nlat:{}'.format(df_row['geo_meanLon'], df_row['geo_meanLat']), fontsize=15)
+
+    # plot wwa
+    sns.set(style="ticks", font_scale=1.5)
+    ax2 = plt.subplot(gs[1:5, :-3])
+
+    wwa, phase, AR1_q, coi, freqs, tau, Neffs, coeff = \
+        Spectral.wwz(ys, ts, freqs=freqs, tau=tau, c=c1, nMC=nMC, nproc=nproc, detrend=detrend,
+                     gaussianize=gaussianize, standardize=standardize)
+
+    lt_part = period_ticks[period_ticks <= np.max(coi)]
+    period_ticks = np.concatenate((lt_part, [np.ceil(np.max(coi))]))
+
+    period_tickslabel = list(map(str, period_ticks))
+    period_tickslabel[0] = ''
+    period_tickslabel[-1] = ''
+    for i, label in enumerate(period_tickslabel):
+        if label[-2:] == '.0':
+            label =  label[:-2]
+            period_tickslabel[i] = label
+
+    Spectral.plot_wwa(wwa, freqs, tau, coi=coi, AR1_q=AR1_q, yticks=period_ticks, yticks_label=period_tickslabel,
+                      ylim=[np.min(period_ticks), np.max(coi)],
+                      plot_cone=True, plot_signif=True, xlabel='Year ({})'.format(df_row['yearUnits']), ylabel='Period (years)',
+                      ax=ax2, levels=levels,
+                      cbar_orientation='horizontal', cbar_labelsize=15, cbar_pad=0.1, cbar_frac=0.15,
+                      )
+
+    # plot psd
+    sns.set(style="ticks", font_scale=1.5)
+    ax3 = plt.subplot(gs[1:4, -3:])
+    ax3.spines['right'].set_visible(False)
+    ax3.spines['top'].set_visible(False)
+    psd, freqs, psd_ar1_q95, psd_ar1 = Spectral.wwz_psd(ys, ts, freqs=freqs, tau=tau, c=c2, nproc=nproc, nMC=nMC,
+                                                        detrend=detrend, gaussianize=gaussianize, standardize=standardize,
+                                                        anti_alias=anti_alias)
+
+    Spectral.plot_psd(psd, freqs, plot_ar1=True, psd_ar1_q95=psd_ar1_q95,
+                      #  period_ticks=period_ticks[period_ticks < np.max(coi)],
+                      period_ticks=period_ticks, period_tickslabel=period_tickslabel,
+                      period_lim=[np.min(period_ticks), np.max(coi)], psd_lim=psd_lim,
+                      color=p.colors_dict[df_row['archiveType']],
+                      ar1_lmstyle='--', plot_gridlines=False,
+                      lmstyle=psd_lmstyle, ax=ax3, period_label='',
+                      label='Estimated spectrum', psd_label='', vertical=True)
+
+    beta_1, f_binned_1, psd_binned_1, Y_reg_1 = Spectral.beta_estimation(psd, freqs, period_I[0], period_I[1])
+    beta_2, f_binned_2, psd_binned_2, Y_reg_2 = Spectral.beta_estimation(psd, freqs, period_D[0], period_D[1])
+    ax3.plot(Y_reg_1, 1/f_binned_1, color='k',
+             label=r'$\beta_I$ = {:.2f}'.format(beta_1) + ', ' + r'$\beta_D$ = {:.2f}'.format(beta_2))
+    #  ax3.plot(Y_reg_1, 1/f_binned_1, color='k')
+    ax3.plot(Y_reg_2, 1/f_binned_2, color='k')
+
+    #  if not np.isnan(beta_1):
+        #  ax3.annotate(r'$\beta_I$ = {:.2f}'.format(beta_1),
+                     #  xy=(0.1, 0.1),
+                     #  arrowprops=dict(facecolor='black', shrink=0.05),
+                     #  horizontalalignment='right', verticalalignment='top',
+                     #  xycoords='axes fraction')
+    #  if not np.isnan(beta_2):
+        #  ax3.annotate(r'$\beta_D$ = {:.2f}'.format(beta_2),
+                     #  xy=(0.1, 0.9),
+                     #  arrowprops=dict(facecolor='black', shrink=0.05),
+                     #  horizontalalignment='right', verticalalignment='top',
+                     #  xycoords='axes fraction')
+
+    plt.tick_params(axis='y', which='both', labelleft='off')
+    #  plt.legend(fontsize=15, bbox_to_anchor=(0.1, -0.25), loc='lower left', ncol=1)
+    plt.legend(fontsize=15, bbox_to_anchor=(0.1, -0.3), loc='lower left', ncol=1)
+
     return fig
