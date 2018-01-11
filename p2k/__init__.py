@@ -296,7 +296,7 @@ def df_append_beta(df, freqs, psds=None, save_path=None, value_name='paleoData_v
 
     '''
     if psds is None:
-        psds = df2psd(df, freqs, value_name=value_name, time_name=value_name)
+        psds = df2psd(df, freqs, value_name=value_name, time_name=time_name)
 
     df_new = df.copy()
     for i, period_range in enumerate(period_ranges):
@@ -756,14 +756,22 @@ def plot_wavelet_summary(df_row, freqs=None, tau=None, c1=1/(8*np.pi**2), c2=1e-
                                                         detrend=detrend, gaussianize=gaussianize, standardize=standardize,
                                                         anti_alias=anti_alias)
 
-    Spectral.plot_psd(psd, freqs, plot_ar1=True, psd_ar1_q95=psd_ar1_q95,
-                      #  period_ticks=period_ticks[period_ticks < np.max(coi)],
-                      period_ticks=period_ticks, period_tickslabel=period_tickslabel,
-                      period_lim=[np.min(period_ticks), np.max(coi)], psd_lim=psd_lim,
-                      color=p.colors_dict[df_row['archiveType']],
-                      ar1_lmstyle='--', plot_gridlines=False,
-                      lmstyle=psd_lmstyle, ax=ax3, period_label='',
-                      label='Estimated spectrum', psd_label='', vertical=True)
+    #  Spectral.plot_psd(psd, freqs, plot_ar1=True, psd_ar1_q95=psd_ar1_q95,
+                      #  #  period_ticks=period_ticks[period_ticks < np.max(coi)],
+                      #  period_ticks=period_ticks, period_tickslabel=period_tickslabel,
+                      #  period_lim=[np.min(period_ticks), np.max(coi)], psd_lim=psd_lim,
+                      #  color=p.colors_dict[df_row['archiveType']],
+                      #  ar1_lmstyle='--', plot_gridlines=False,
+                      #  lmstyle=psd_lmstyle, ax=ax3, period_label='',
+                      #  label='Estimated spectrum', psd_label='', vertical=True)
+    ax3.loglog(psd, 1/freqs, '-', label='Estimated spectrum', color=p.colors_dict[df_row['archiveType']])
+    ax3.loglog(psd_ar1_q95, 1/freqs, '--', label='AR(1) 95%', color=sns.xkcd_rgb['pale red'])
+    ax3.set_yticks(period_ticks)
+    ax3.set_ylim([np.min(period_ticks), np.max(coi)])
+
+    ax3.xaxis.set_major_formatter(ScalarFormatter())
+    ax3.xaxis.set_major_formatter(FormatStrFormatter('%g'))
+    ax3.invert_xaxis()
 
     beta_1, f_binned_1, psd_binned_1, Y_reg_1 = Spectral.beta_estimation(psd, freqs, period_I[0], period_I[1])
     beta_2, f_binned_2, psd_binned_2, Y_reg_2 = Spectral.beta_estimation(psd, freqs, period_D[0], period_D[1])
