@@ -358,12 +358,18 @@ def df_append_converted_temp(df, inst_temp_path, yr_range=None):
     c_overlap = 0
     for index, row in df.iterrows():
         Xo, to = row2ts(row, clean_ts=True)
+        assert(Xo.size == to.size)
         dt = np.median(np.diff(to))
         df.at[index, 'dt'] = dt
 
         target_lat, target_lon = row2latlon(row)
         lat_ind, lon_ind = find_closest_loc(lat, lon, target_lat, target_lon)
         sst_closest, year_closest = Timeseries.clean_ts(temp[:, lat_ind, lon_ind], year)
+        if np.size(year_closest) == 0:
+            c_NaN += 1
+            continue
+
+        sst_closest, year_closest = annualize_ts(sst_closest, year_closest)
         df.at[index, 'instrumental temperature'] = sst_closest
         df.at[index, 'instrumental year'] = year_closest
 
@@ -372,24 +378,20 @@ def df_append_converted_temp(df, inst_temp_path, yr_range=None):
             df.at[index, 'converted'] = True
             continue
 
-        if np.size(year_closest) == 0:
-            c_NaN += 1
-            continue
-
         if yr_range:
             year_range = (year_closest >= yr_range[0]) & (year_closest <= yr_range[1])
             sst_closest = sst_closest[year_range]
             year_closest = year_closest[year_range]
 
-        if dt < 1:
-            # when the proxy data has higher temperal resolution than annual data, annualize it
-            Xo_ann, to_ann = annualize_ts(Xo, to)
-            to_ann = to_ann + 0.5 # relocate the averaged value to the center point
-            # find the proxy data that overlapped with the instrumental data
-        else:
-            Xo_ann, to_ann = Xo, to
+        #  if dt < 1:
+            #  # when the proxy data has higher temperal resolution than annual data, annualize it
+            #  Xo_ann, to_ann = annualize_ts(Xo, to)
+        #  else:
+            #  Xo_ann, to_ann = Xo, to
 
-        overlap_range = (to_ann>=np.min(year_closest)) & (to_ann<=np.max(year_closest))
+        Xo_ann, to_ann = annualize_ts(Xo, to)
+
+        overlap_range = (to_ann >= np.min(year_closest)) & (to_ann <= np.max(year_closest))
         if np.sum(overlap_range*1) <= 10:
             c_overlap += 1
             continue
