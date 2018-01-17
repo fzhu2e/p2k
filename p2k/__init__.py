@@ -11,6 +11,8 @@ from scipy import spatial
 import xarray as xr
 import netCDF4
 from datetime import datetime
+from scipy.interpolate import interp1d
+import statsmodels.api as sm
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter, FormatStrFormatter
@@ -132,13 +134,19 @@ def find_closest_loc(lat, lon, target_lat, target_lon):
         model_locations.append((m_lat, m_lon))
 
     # target locations
-    target_locations_dup = list(zip(target_lat, target_lon))
-    target_locations = list(set(target_locations_dup))  # remove duplicated locations
-    n_loc = np.shape(target_locations)[0]
+    if np.size(target_lat) > 1:
+        target_locations_dup = list(zip(target_lat, target_lon))
+        target_locations = list(set(target_locations_dup))  # remove duplicated locations
+        n_loc = np.shape(target_locations)[0]
+    else:
+        target_locations = [(target_lat, target_lon)]
+        n_loc = 1
 
     lat_ind = np.zeros(n_loc, dtype=int)
     lon_ind = np.zeros(n_loc, dtype=int)
-    df_ind = np.zeros(n_loc, dtype=int)
+
+    if np.size(target_lat) > 1:
+        df_ind = np.zeros(n_loc, dtype=int)
 
     # get the closest grid
     for i, target_loc in enumerate(target_locations):
@@ -148,12 +156,16 @@ def find_closest_loc(lat, lon, target_lat, target_lon):
         closest = Y[index]
         lat_ind[i] = list(lat).index(closest[0])
         lon_ind[i] = list(lon).index(closest[1])
-        df_ind[i] = target_locations_dup.index(target_loc)
+        if np.size(target_lat) > 1:
+            df_ind[i] = target_locations_dup.index(target_loc)
 
-    return lat_ind, lon_ind, df_ind
+    if np.size(target_lat) > 1:
+        return lat_ind, lon_ind, df_ind
+    else:
+        return lat_ind[0], lon_ind[0]
 
 
-def load_CESM_netcdf(path, var_list):
+def load_CESM_netcdf(path, var_list, decode_times=False):
     ''' Load CESM NetCDF file
 
     Args:
@@ -168,7 +180,7 @@ def load_CESM_netcdf(path, var_list):
 
     '''
 
-    handle = xr.open_dataset(path, decode_times=False)
+    handle = xr.open_dataset(path, decode_times=decode_times)
 
     var_fields = []
 
@@ -220,7 +232,7 @@ def annualize(var_field, year, weights=None):
         year_int (array): the set of the years in integers [year in int]
     '''
     year_int = list(set(np.floor(year)))
-    year_int = np.asarray(list(map(int, year_int)))
+    year_int = np.sort(list(map(int, year_int)))
     n_year = len(year_int)
     var_ann = np.ndarray(shape=(n_year, *var_field.shape[1:]))
 
@@ -241,7 +253,24 @@ def annualize(var_field, year, weights=None):
     return var_ann, year_int
 
 
-def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path=None):
+def annualize_ts(ys, ts):
+    year_int = list(set(np.floor(ts)))
+    year_int = np.sort(list(map(int, year_int)))
+    n_year = len(year_int)
+    year_int_pad = list(year_int)
+    year_int_pad.append(np.max(year_int)+1)
+    ys_ann = np.zeros(n_year)
+
+    for i in range(n_year):
+        t_start = year_int_pad[i]
+        t_end = year_int_pad[i+1]
+        t_range = (ts >= t_start) & (ts < t_end)
+        ys_ann[i] = np.average(ys[t_range], axis=0)
+
+    return ys_ann, year_int
+
+
+def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path=None, standardize=True):
     ''' Calculate the power spectral densities of a Pandas DataFrame PAGES2k dataset using WWZ method
 
     Args:
@@ -265,7 +294,7 @@ def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path
         to = np.asarray(year[k], dtype=np.float)
         Xo, to = Timeseries.clean_ts(Xo, to)
         tau = np.linspace(np.min(to), np.max(to), 501)
-        psds[k, :], _, _, _ = Spectral.wwz_psd(Xo, to, freqs=freqs, tau=tau, c=1e-3, nproc=16, nMC=0)
+        psds[k, :], _, _, _ = Spectral.wwz_psd(Xo, to, freqs=freqs, tau=tau, c=1e-3, nproc=16, nMC=0, standardize=standardize)
 
     if save_path:
         print('p2k >>> Saving pickle file at: {}'.format(save_path))
@@ -280,6 +309,111 @@ def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path
         print('p2k >>> DONE')
 
     return psds
+
+
+def row2ts(row, clean_ts=True):
+    to = np.asarray(row['year'])
+    Xo = np.asarray(row['paleoData_values'])
+    if clean_ts:
+        Xo, to = Timeseries.clean_ts(Xo, to)
+    return Xo, to
+
+
+def row2latlon(row):
+    lat = np.asarray(row['geo_meanLat'])
+    lon = np.asarray(row['geo_meanLon'])
+    return lat, lon
+
+
+def clean_df(df):
+    for index, row in df.iterrows():
+        Xo, to = row2ts(row, clean_ts=True)
+        df.at[index, 'paleoData_values'] = Xo
+        df.at[index, 'year'] = to
+
+    return df
+
+
+def df_append_converted_temp(df, inst_temp_path, yr_range=None):
+    # load instrumental temperature data
+    lat, lon, year, temp = load_CESM_netcdf(
+        inst_temp_path, ['latitude', 'longitude', 'year', 'temperature_anomaly'], decode_times=False
+    )
+
+    # preprocess df
+    df = clean_df(df)
+    df['dt'] = 1.0
+    df['conversion factor'] = 1.0
+    df['R2'] = 1.0
+    df['estimated temperature'] = 1.0
+    df['estimated temperature'] = df['estimated temperature'].astype(object)
+    df['instrumental temperature'] = 1.0
+    df['instrumental temperature'] = df['instrumental temperature'].astype(object)
+    df['instrumental year'] = 1.0
+    df['instrumental year'] = df['instrumental year'].astype(object)
+    df['converted'] = False
+
+    # loop over df
+    c_NaN = 0
+    c_overlap = 0
+    for index, row in df.iterrows():
+        Xo, to = row2ts(row, clean_ts=True)
+        dt = np.median(np.diff(to))
+        df.at[index, 'dt'] = dt
+
+        target_lat, target_lon = row2latlon(row)
+        lat_ind, lon_ind = find_closest_loc(lat, lon, target_lat, target_lon)
+        sst_closest, year_closest = Timeseries.clean_ts(temp[:, lat_ind, lon_ind], year)
+        df.at[index, 'instrumental temperature'] = sst_closest
+        df.at[index, 'instrumental year'] = year_closest
+
+        if row['paleoData_variableName'] == 'temperature':
+            df.at[index, 'estimated temperature'] = Xo
+            df.at[index, 'converted'] = True
+            continue
+
+        if np.size(year_closest) == 0:
+            c_NaN += 1
+            continue
+
+        if yr_range:
+            year_range = (year_closest >= yr_range[0]) & (year_closest <= yr_range[1])
+            sst_closest = sst_closest[year_range]
+            year_closest = year_closest[year_range]
+
+        if dt < 1:
+            # when the proxy data has higher temperal resolution than annual data, annualize it
+            Xo_ann, to_ann = annualize_ts(Xo, to)
+            to_ann = to_ann + 0.5 # relocate the averaged value to the center point
+            # find the proxy data that overlapped with the instrumental data
+        else:
+            Xo_ann, to_ann = Xo, to
+
+        overlap_range = (to_ann>=np.min(year_closest)) & (to_ann<=np.max(year_closest))
+        if np.sum(overlap_range*1) <= 10:
+            c_overlap += 1
+            continue
+
+        overlap_to = to_ann[overlap_range]
+        overlap_Xo = Xo_ann[overlap_range]
+        # interpolate instrumental data to annualized proxy time axis
+        interp_f = interp1d(year_closest, sst_closest)
+        interp_to = overlap_to
+        interp_Xo = interp_f(overlap_to)
+        # calculate the linear regression slope and R2
+        X = sm.add_constant(overlap_Xo)
+        model = sm.OLS(interp_Xo, X)
+        results = model.fit()
+        Y_reg = model.predict(results.params)
+        df.at[index, 'conversion factor'] = results.params[1]
+        df.at[index, 'R2'] = results.rsquared
+        df.at[index, 'estimated temperature'] = results.params[0] + results.params[1]*Xo
+        df.at[index, 'converted'] = True
+
+    print('{} times skip due to NaN at cloest location'.format(c_NaN))
+    print('{} times skip due to short time range overlap'.format(c_overlap))
+
+    return df
 
 
 def df_append_beta(df, freqs, psds=None, save_path=None, value_name='paleoData_values', time_name='year',
@@ -673,7 +807,7 @@ def plot_wavelet_summary(df_row, freqs=None, tau=None, c1=1/(8*np.pi**2), c2=1e-
 
     if np.mean(np.diff(ts)) < 1:
         warnings.warn('The time series will be annualized due to mean of dt less than one year.')
-        ys, ts = Timeseries.annualize(ys, ts)
+        ys, ts = annualize_ts(ys, ts)
 
     if period_ticks is not None:
         period_ticks = np.asarray(period_ticks)
@@ -768,10 +902,6 @@ def plot_wavelet_summary(df_row, freqs=None, tau=None, c1=1/(8*np.pi**2), c2=1e-
     ax3.loglog(psd_ar1_q95, 1/freqs, '--', label='AR(1) 95%', color=sns.xkcd_rgb['pale red'])
     ax3.set_yticks(period_ticks)
     ax3.set_ylim([np.min(period_ticks), np.max(coi)])
-
-    ax3.xaxis.set_major_formatter(ScalarFormatter())
-    ax3.xaxis.set_major_formatter(FormatStrFormatter('%g'))
-    ax3.invert_xaxis()
 
     beta_1, f_binned_1, psd_binned_1, Y_reg_1 = Spectral.beta_estimation(psd, freqs, period_I[0], period_I[1])
     beta_2, f_binned_2, psd_binned_2, Y_reg_2 = Spectral.beta_estimation(psd, freqs, period_D[0], period_D[1])
