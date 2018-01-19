@@ -21,6 +21,7 @@ from matplotlib import gridspec
 import seaborn as sns
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import nitime.algorithms as tsa
 
 from tqdm import tqdm
 import pickle
@@ -135,8 +136,9 @@ def find_closest_loc(lat, lon, target_lat, target_lon):
 
     # target locations
     if np.size(target_lat) > 1:
-        target_locations_dup = list(zip(target_lat, target_lon))
-        target_locations = list(set(target_locations_dup))  # remove duplicated locations
+        #  target_locations_dup = list(zip(target_lat, target_lon))
+        #  target_locations = list(set(target_locations_dup))  # remove duplicated locations
+        target_locations = list(zip(target_lat, target_lon))
         n_loc = np.shape(target_locations)[0]
     else:
         target_locations = [(target_lat, target_lon)]
@@ -156,11 +158,12 @@ def find_closest_loc(lat, lon, target_lat, target_lon):
         closest = Y[index]
         lat_ind[i] = list(lat).index(closest[0])
         lon_ind[i] = list(lon).index(closest[1])
-        if np.size(target_lat) > 1:
-            df_ind[i] = target_locations_dup.index(target_loc)
+        #  if np.size(target_lat) > 1:
+            #  df_ind[i] = target_locations_dup.index(target_loc)
 
     if np.size(target_lat) > 1:
-        return lat_ind, lon_ind, df_ind
+        #  return lat_ind, lon_ind, df_ind
+        return lat_ind, lon_ind
     else:
         return lat_ind[0], lon_ind[0]
 
@@ -311,6 +314,59 @@ def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path
     return psds
 
 
+def df2psd_mtm(df, value_name='paleoData_values', time_name='year', save_path=None, standardize=True):
+    ''' Calculate the power spectral densities of a Pandas DataFrame PAGES2k dataset using WWZ method
+
+    Args:
+        df (Pandas DataFrame): a Pandas DataFrame
+        freqs (array): frequency vector for spectral analysis
+        save_path (str): if set, save the PSD result to the given path
+
+    Returns:
+        psds (2d array): the scaling exponents
+
+    '''
+    paleoData_values = df[value_name].values
+    year = df[time_name].values
+
+    n_series = len(year)
+    freqs = []
+    psds = []
+
+    for k in tqdm(range(n_series), desc='Processing time series'):
+        Xo = np.asarray(paleoData_values[k], dtype=np.float)
+        to = np.asarray(year[k], dtype=np.float)
+        Xo, to = Timeseries.clean_ts(Xo, to)
+
+        if standardize:
+            Xo, _, _ = Timeseries.standardize(Xo)
+
+        Xo_ann, to_ann = annualize(Xo, to)
+
+        interp_f = interp1d(to_ann, Xo_ann)
+        to_interp = np.arange(np.min(to_ann), np.max(to_ann)+0.5, dtype=int)
+        Xo_interp = interp_f(to_interp)
+
+        freq_mtm, psd_mtm, nu = tsa.multi_taper_psd(Xo_interp, adaptive=False, jackknife=False,
+                                                    NW=1, Fs=1)
+        freqs.append(freq_mtm)
+        psds.append(psd_mtm)
+
+    if save_path:
+        print('p2k >>> Saving pickle file at: {}'.format(save_path))
+
+        dir_name = os.path.dirname(save_path)
+        if not os.path.exists(dir_name):
+            os.makedirs(dir_name)
+
+        with open(save_path, 'wb') as f:
+            pickle.dump(psds, freqs, f)
+
+        print('p2k >>> DONE')
+
+    return psds, freqs
+
+
 def row2ts(row, clean_ts=True):
     to = np.asarray(row['year'])
     Xo = np.asarray(row['paleoData_values'])
@@ -456,9 +512,47 @@ def df_append_beta(df, freqs, psds=None, save_path=None, value_name='paleoData_v
     return df_new
 
 
+def df_append_beta_mtm(df, psds=None, freqs=None, save_path=None, value_name='paleoData_values', time_name='year',
+                       period_ranges=[(1/200, 1/20), (1/8, 1/2)], period_names=['beta_D', 'beta_I']
+                       ):
+    ''' Calculate the scaling exponent and add to a new column in the given DataFrame
+
+    Args:
+        df (Pandas DataFrame): a Pandas DataFrame
+        freqs (array): frequency vector for spectral analysis
+
+    Returns:
+        df_new (Pandas DataFrame): the DataFrame with scaling exponents added on
+
+    '''
+    if psds is None or freqs is None:
+        psds, freqs = df2psd_mtm(df, freqs, value_name=value_name, time_name=time_name)
+
+    df_new = df.copy()
+    for i, period_range in enumerate(period_ranges):
+
+        beta_list = []
+        for j, psd in enumerate(psds):
+            beta, f_binned, psd_binned, Y_reg = Spectral.beta_estimation(psds[j], freqs[j], period_range[0], period_range[1])
+            beta_list.append(beta)
+
+        df_new[period_names[i]] = beta_list
+
+    if save_path:
+        print('p2k >>> Saving pickle file at: {}'.format(save_path))
+        dir_name = os.path.dirname(save_path)
+        if not os.path.exists(dir_name):
+            os.makedirs(dir_name)
+
+        df_new.to_pickle(save_path)
+        print('p2k >>> DONE')
+
+    return df_new
+
+
 def plot_psds(psds, freqs, archive_type='glacier ice',
               period_ranges=[(1/200, 1/20), (1/8, 1/2)], period_names=[r'$\beta_D$', r'$\beta_I$'],
-              period_ticks=[2, 5, 10, 20, 50, 100, 200, 500], title=None,
+              period_ticks=[2, 5, 10, 20, 50, 100, 200, 500], title=None, legend_loc='best',
               figsize=[8, 8], ax=None, ylim=[1e-3, 1e4]):
     ''' Plot PSDs with scaling slopes
 
@@ -524,7 +618,7 @@ def plot_psds(psds, freqs, archive_type='glacier ice',
     ax.xaxis.set_major_formatter(FormatStrFormatter('%g'))
     ax.set_xlim([np.min(period_ticks), np.max(period_ticks)])
     plt.gca().invert_xaxis()
-    ax.legend()
+    ax.legend(loc=legend_loc)
 
     return ax
 
