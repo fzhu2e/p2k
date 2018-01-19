@@ -273,7 +273,7 @@ def annualize_ts(ys, ts):
     return ys_ann, year_int
 
 
-def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path=None, standardize=True):
+def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path=None, standardize=False):
     ''' Calculate the power spectral densities of a Pandas DataFrame PAGES2k dataset using WWZ method
 
     Args:
@@ -314,7 +314,7 @@ def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path
     return psds
 
 
-def df2psd_mtm(df, value_name='paleoData_values', time_name='year', save_path=None, standardize=True):
+def df2psd_mtm(df, value_name='paleoData_values', time_name='year', save_path=None, standardize=False):
     ''' Calculate the power spectral densities of a Pandas DataFrame PAGES2k dataset using WWZ method
 
     Args:
@@ -553,7 +553,7 @@ def df_append_beta_mtm(df, psds=None, freqs=None, save_path=None, value_name='pa
 def plot_psds(psds, freqs, archive_type='glacier ice',
               period_ranges=[(1/200, 1/20), (1/8, 1/2)], period_names=[r'$\beta_D$', r'$\beta_I$'],
               period_ticks=[2, 5, 10, 20, 50, 100, 200, 500], title=None, legend_loc='best',
-              figsize=[8, 8], ax=None, ylim=[1e-3, 1e4]):
+              figsize=[8, 8], ax=None, ylim=None):
     ''' Plot PSDs with scaling slopes
 
     Args:
@@ -606,7 +606,8 @@ def plot_psds(psds, freqs, archive_type='glacier ice',
         else:
             ax.plot(1/f_binned_list[i], Y_reg_list[i], color='k')
 
-    ax.set_ylim(ylim)
+    if ylim:
+        ax.set_ylim(ylim)
 
     if title:
         ax.set_title(title, fontweight='bold')
