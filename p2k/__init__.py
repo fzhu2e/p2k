@@ -24,6 +24,7 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import nitime.algorithms as tsa
 
+from pathos.multiprocessing import ProcessingPool as Pool
 from tqdm import tqdm
 import pickle
 import warnings
@@ -391,16 +392,19 @@ def df2psd_mtm(df, value_name='paleoData_values', time_name='year', save_path=No
     return psds, freqs
 
 
-def df2composite(df, value_name='paleoData_values', time_name='year', bin_width=10, standardize=False):
+def df2composite(df, value_name='paleoData_values', time_name='year', bin_width=10,
+                 gaussianize=False, standardize=False):
     df_comp = pd.DataFrame(columns=['time', 'value', 'min', 'max', 'median', 'mean'])
     df_comp.set_index('time', inplace=True)
 
     for index, row in df.iterrows():
         Xo, to = row2ts(row, clean_ts=True, value_name=value_name, time_name=time_name)
 
+        wa = Spectral.WaveletAnalysis()
         if standardize:
-            wa = Spectral.WaveletAnalysis()
             Xo = wa.preprocess(Xo, to, standardize=True)
+        if gaussianize:
+            Xo = wa.preprocess(Xo, to, gaussianize=True)
 
         Xo_bin, to_bin = bin_ts(Xo, to, bin_width=bin_width)
         for i, t in enumerate(to_bin):
@@ -421,6 +425,27 @@ def df2composite(df, value_name='paleoData_values', time_name='year', bin_width=
         row['median'] = np.nanmedian(row['value'])
 
     return df_comp
+
+
+def bootstrap(samples, n_bootstraps=1000, stat_func=np.nanmedian, nproc=8):
+    n_samples = np.shape(samples)[0]
+
+    if nproc == 1 :
+        stats = np.zeros(n_bootstraps)
+        for i in tqdm(range(n_bootstraps)):
+            rand_ind = np.random.randint(n_samples, size=n_samples)
+            stats[i] = stat_func(samples[rand_ind])
+    else:
+        def one_bootstrap(i):
+            rand_ind = np.random.randint(n_samples, size=n_samples)
+            stat = stat_func(samples[rand_ind])
+
+            return stat
+
+        with Pool(nproc) as pool:
+            stats = pool.map(one_bootstrap, range(n_bootstraps))
+
+    return stats
 
 
 def df2comp_ols(df, inst_temp_path,
