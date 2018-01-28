@@ -13,6 +13,7 @@ import netCDF4
 from datetime import datetime
 from scipy.interpolate import interp1d
 import statsmodels.api as sm
+from statsmodels.graphics.gofplots import ProbPlot
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter, FormatStrFormatter
@@ -273,6 +274,29 @@ def annualize_ts(ys, ts):
     return ys_ann, year_int
 
 
+def bin_ts(ys, ts, bin_vector=None, bin_width=10, clean_ts=True):
+    if bin_vector is None:
+        bin_vector = np.arange(
+            bin_width*(np.min(ts)//bin_width),
+            bin_width*(np.max(ts)//bin_width+1),
+            step=bin_width)
+
+    ts_bin = (bin_vector[1:] + bin_vector[:-1])/2
+    n_bin = np.size(ts_bin)
+    ys_bin = np.zeros(n_bin)
+
+    for i in range(n_bin):
+        t_start = bin_vector[i]
+        t_end = bin_vector[i+1]
+        t_range = (ts >= t_start) & (ts < t_end)
+        ys_bin[i] = np.average(ys[t_range], axis=0)
+
+    if clean_ts:
+        ys_bin, ts_bin = Timeseries.clean_ts(ys_bin, ts_bin)
+
+    return ys_bin, ts_bin
+
+
 def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path=None, standardize=False):
     ''' Calculate the power spectral densities of a Pandas DataFrame PAGES2k dataset using WWZ method
 
@@ -367,9 +391,86 @@ def df2psd_mtm(df, value_name='paleoData_values', time_name='year', save_path=No
     return psds, freqs
 
 
-def row2ts(row, clean_ts=True):
-    to = np.asarray(row['year'])
-    Xo = np.asarray(row['paleoData_values'])
+def df2composite(df, value_name='paleoData_values', time_name='year', bin_width=10, standardize=False):
+    df_comp = pd.DataFrame(columns=['time', 'value', 'min', 'max', 'median', 'mean'])
+    df_comp.set_index('time', inplace=True)
+
+    for index, row in df.iterrows():
+        Xo, to = row2ts(row, clean_ts=True, value_name=value_name, time_name=time_name)
+
+        if standardize:
+            wa = Spectral.WaveletAnalysis()
+            Xo = wa.preprocess(Xo, to, standardize=True)
+
+        Xo_bin, to_bin = bin_ts(Xo, to, bin_width=bin_width)
+        for i, t in enumerate(to_bin):
+            ind_list = list(df_comp.index)
+            if t not in ind_list:
+                df_comp.at[t, 'value'] = np.asarray([Xo_bin[i]])
+            else:
+                list_tmp = df_comp.loc[t, 'value']
+                list_tmp = np.append(list_tmp, Xo_bin[i])
+                df_comp['value'] = df_comp['value'].astype(object)
+                df_comp.at[t, 'value'] = list_tmp
+
+    df_comp = df_comp.sort_index()
+    for index, row in df_comp.iterrows():
+        row['min'] = np.nanmin(row['value'])
+        row['max'] = np.nanmax(row['value'])
+        row['mean'] = np.nanmean(row['value'])
+        row['median'] = np.nanmedian(row['value'])
+
+    return df_comp
+
+
+def df2comp_ols(df, inst_temp_path,
+                value_name='paleoData_values', time_name='year',
+                bin_width=10, lower_bd=3):
+    df_proxy = df_append_nearest_obs(df, inst_temp_path)
+    df_comp = df2composite(df_proxy, bin_width=bin_width, value_name=value_name, time_name=time_name)
+    df_comp = clean_composite(df_comp, lower_bd=lower_bd)
+    df_comp_obs = df2composite(df_proxy, bin_width=bin_width,
+                                   value_name='obs_temp', time_name='obs_year')
+    df_comp_obs = clean_composite(df_comp_obs, lower_bd=lower_bd)
+
+    ts_proxy = np.asarray(df_comp.index)
+    ys_proxy = np.asarray(df_comp['median'])
+    ts_obs = np.asarray(df_comp_obs.index)
+    ys_obs = np.asarray(df_comp_obs['median'])
+
+    # OLS
+    ys_proxy_overlap, ys_obs_overlap, time_overlap = overlap_ts(ys_proxy, ts_proxy, ys_obs, ts_obs)
+
+    model = ols_ts(ys_proxy_overlap, time_overlap, ys_obs_overlap, time_overlap)
+    results = model.fit()
+    R2 = results.rsquared
+    slope = results.params[1]
+
+    return ys_proxy, ts_proxy, ys_obs, ts_obs, slope, R2
+
+
+def clean_composite(df, lower_bd=3):
+    for index, row in df.iterrows():
+        if row['value'].shape[0] < lower_bd:
+            df = df.drop(index)
+
+    return df
+
+
+def fill_nan_composite(df, lower_bd=3):
+    for index, row in df.iterrows():
+        if row['value'].shape[0] < lower_bd:
+            df.loc[index, 'min'] = np.nan
+            df.loc[index, 'max'] = np.nan
+            df.loc[index, 'mean'] = np.nan
+            df.loc[index, 'median'] = np.nan
+
+    return df
+
+
+def row2ts(row, value_name='paleoData_values', time_name='year', clean_ts=True):
+    to = np.asarray(row[time_name])
+    Xo = np.asarray(row[value_name])
     if clean_ts:
         Xo, to = Timeseries.clean_ts(Xo, to)
     return Xo, to
@@ -382,15 +483,60 @@ def row2latlon(row):
 
 
 def clean_df(df):
+    #  df['dt_median'] = 1.0
+    #  df['dt_mean'] = 1.0
+    #  df['evenly_spaced'] = False
     for index, row in df.iterrows():
         Xo, to = row2ts(row, clean_ts=True)
         df.at[index, 'paleoData_values'] = Xo
         df.at[index, 'year'] = to
+        #  dt_median = np.median(np.diff(to))
+        #  df.at[index, 'dt_median'] = dt_median
+        #  dt_mean = np.mean(np.diff(to))
+        #  df.at[index, 'dt_mean'] = dt_mean
+        #  if len(set(np.diff(to))) == 1:
+        #      df.at[index, 'evenly_spaced']=True
 
     return df
 
 
-def df_append_converted_temp(df, inst_temp_path, yr_range=None):
+def overlap_ts(ys_proxy, ts_proxy, ys_obs, ts_obs):
+    ys_proxy = np.asarray(ys_proxy, dtype=np.float)
+    ts_proxy = np.asarray(ts_proxy, dtype=np.float)
+    ys_obs = np.asarray(ys_obs, dtype=np.float)
+    ts_obs = np.asarray(ts_obs, dtype=np.float)
+
+    overlap_proxy = (ts_proxy >= np.min(ts_obs)) & (ts_proxy <= np.max(ts_obs))
+    overlap_obs = (ts_obs >= np.min(ts_proxy)) & (ts_obs <= np.max(ts_proxy))
+
+    ys_proxy_overlap, ts_proxy_overlap = ys_proxy[overlap_proxy], ts_proxy[overlap_proxy]
+    ys_obs_overlap, ts_obs_overlap = ys_obs[overlap_obs], ts_obs[overlap_obs]
+
+    time_overlap = np.intersect1d(ts_proxy_overlap, ts_obs_overlap)
+    ind_proxy = list(i for i, t in enumerate(ts_proxy_overlap) if t in time_overlap)
+    ind_obs = list(i for i, t in enumerate(ts_obs_overlap) if t in time_overlap)
+    ys_proxy_overlap = ys_proxy_overlap[ind_proxy]
+    ys_obs_overlap = ys_obs_overlap[ind_obs]
+
+    return ys_proxy_overlap, ys_obs_overlap, time_overlap
+
+
+def ols_ts(ys_proxy, ts_proxy, ys_obs, ts_obs):
+    ys_proxy = np.asarray(ys_proxy, dtype=np.float)
+    ts_proxy = np.asarray(ts_proxy, dtype=np.float)
+    ys_obs = np.asarray(ys_obs, dtype=np.float)
+    ts_obs = np.asarray(ts_obs, dtype=np.float)
+
+    ys_proxy_overlap, ys_obs_overlap, time_overlap = overlap_ts(ys_proxy, ts_proxy, ys_obs, ts_obs)
+
+    # calculate the linear regression
+    X = sm.add_constant(ys_proxy_overlap)
+    ols_model = sm.OLS(ys_obs_overlap, X, missing='drop')
+
+    return ols_model
+
+
+def df_append_nearest_obs(df, inst_temp_path):
     # load instrumental temperature data
     lat, lon, year, temp = load_CESM_netcdf(
         inst_temp_path, ['latitude', 'longitude', 'year', 'temperature_anomaly'], decode_times=False
@@ -398,15 +544,32 @@ def df_append_converted_temp(df, inst_temp_path, yr_range=None):
 
     # preprocess df
     df = clean_df(df)
-    df['dt'] = 1.0
-    df['conversion factor'] = 1.0
-    df['R2'] = 1.0
-    df['estimated temperature'] = 1.0
-    df['estimated temperature'] = df['estimated temperature'].astype(object)
-    df['instrumental temperature'] = 1.0
-    df['instrumental temperature'] = df['instrumental temperature'].astype(object)
-    df['instrumental year'] = 1.0
-    df['instrumental year'] = df['instrumental year'].astype(object)
+    df['obs_temp'] = np.nan
+    df['obs_temp'] = df['obs_temp'].astype(object)
+    df['obs_year'] = np.nan
+    df['obs_year'] = df['obs_year'].astype(object)
+
+    for index, row in df.iterrows():
+        tgt_lat, tgt_lon = row2latlon(row)
+        lat_ind, lon_ind = find_closest_loc(lat, lon, tgt_lat, tgt_lon)
+        df.at[index, 'obs_temp'], df.at[index, 'obs_year'] = Timeseries.clean_ts(temp[:, lat_ind, lon_ind], year)
+
+    return df
+
+
+def df_append_converted_temp(df, inst_temp_path, bin_width=10, yr_range=None):
+    # load instrumental temperature data
+    lat, lon, year, temp = load_CESM_netcdf(
+        inst_temp_path, ['latitude', 'longitude', 'year', 'temperature_anomaly'], decode_times=False
+    )
+
+    # preprocess df
+    df = clean_df(df)
+    #  df['dt'] = 1.0
+    df['conversion_factor'] = np.nan
+    df['R2'] = np.nan
+    df['converted_temperature'] = np.nan
+    df['converted_temperature'] = df['converted_temperature'].astype(object)
     df['converted'] = False
 
     # loop over df
@@ -414,58 +577,47 @@ def df_append_converted_temp(df, inst_temp_path, yr_range=None):
     c_overlap = 0
     for index, row in df.iterrows():
         Xo, to = row2ts(row, clean_ts=True)
-        assert(Xo.size == to.size)
-        dt = np.median(np.diff(to))
-        df.at[index, 'dt'] = dt
 
-        target_lat, target_lon = row2latlon(row)
-        lat_ind, lon_ind = find_closest_loc(lat, lon, target_lat, target_lon)
-        sst_closest, year_closest = Timeseries.clean_ts(temp[:, lat_ind, lon_ind], year)
-        if np.size(year_closest) == 0:
+        # focus on time series over the defined year range
+        if yr_range:
+            selector = (to >= yr_range[0]) & (to <= yr_range[1])
+            Xo, to = Xo[selector], to[selector]
+            if to.size == 0:
+                c_overlap += 1
+                continue
+
+        Xo_bin, to_bin = bin_ts(Xo, to, bin_width=bin_width)
+
+        tgt_lat, tgt_lon = row2latlon(row)
+        lat_ind, lon_ind = find_closest_loc(lat, lon, tgt_lat, tgt_lon)
+        temp_nearest, year_nearest = Timeseries.clean_ts(temp[:, lat_ind, lon_ind], year)
+        if np.size(year_nearest) == 0:
             c_NaN += 1
             continue
 
-        sst_closest, year_closest = annualize_ts(sst_closest, year_closest)
-        df.at[index, 'instrumental temperature'] = sst_closest
-        df.at[index, 'instrumental year'] = year_closest
-
+        temp_bin, year_bin = bin_ts(temp_nearest, year_nearest, bin_width=bin_width)
         if row['paleoData_variableName'] == 'temperature':
-            df.at[index, 'estimated temperature'] = Xo
+            df.at[index, 'converted_temperature'] = Xo
             df.at[index, 'converted'] = True
             continue
 
-        if yr_range:
-            year_range = (year_closest >= yr_range[0]) & (year_closest <= yr_range[1])
-            sst_closest = sst_closest[year_range]
-            year_closest = year_closest[year_range]
+        #  overlap_proxy = (to_bin >= np.min(year_bin)) & (to_bin <= np.max(year_bin))
+        #  overlap_obs = (year_bin >= np.min(to_bin)) & (year_bin <= np.max(to_bin))
+        Xo_bin_overlap, temp_bin_overlap, time_overlap = overlap_ts(Xo_bin, to_bin, temp_bin, year_bin)
 
-        #  if dt < 1:
-            #  # when the proxy data has higher temperal resolution than annual data, annualize it
-            #  Xo_ann, to_ann = annualize_ts(Xo, to)
-        #  else:
-            #  Xo_ann, to_ann = Xo, to
-
-        Xo_ann, to_ann = annualize_ts(Xo, to)
-
-        overlap_range = (to_ann >= np.min(year_closest)) & (to_ann <= np.max(year_closest))
-        if np.sum(overlap_range*1) <= 10:
+        if np.sum(time_overlap*1) <= 10:
             c_overlap += 1
             continue
 
-        overlap_to = to_ann[overlap_range]
-        overlap_Xo = Xo_ann[overlap_range]
-        # interpolate instrumental data to annualized proxy time axis
-        interp_f = interp1d(year_closest, sst_closest)
-        interp_to = overlap_to
-        interp_Xo = interp_f(overlap_to)
         # calculate the linear regression slope and R2
-        X = sm.add_constant(overlap_Xo)
-        model = sm.OLS(interp_Xo, X)
+        X = sm.add_constant(Xo_bin_overlap)
+        model = sm.OLS(temp_bin_overlap, X, missing='drop')
         results = model.fit()
-        Y_reg = model.predict(results.params)
-        df.at[index, 'conversion factor'] = results.params[1]
+        #  Y_reg = model.predict(results.params)
+
+        df.at[index, 'conversion_factor'] = results.params[1]
         df.at[index, 'R2'] = results.rsquared
-        df.at[index, 'estimated temperature'] = results.params[0] + results.params[1]*Xo
+        df.at[index, 'converted_temperature'] = results.params[0] + results.params[1]*Xo
         df.at[index, 'converted'] = True
 
     print('{} times skip due to NaN at cloest location'.format(c_NaN))
@@ -552,7 +704,7 @@ def df_append_beta_mtm(df, psds=None, freqs=None, save_path=None, value_name='pa
 
 def plot_psds(psds, freqs, archive_type='glacier ice',
               period_ranges=[(1/200, 1/20), (1/8, 1/2)], period_names=[r'$\beta_D$', r'$\beta_I$'],
-              period_ticks=[2, 5, 10, 20, 50, 100, 200, 500], title=None, legend_loc='best',
+              period_ticks=[2, 5, 10, 20, 50, 100, 200, 500], title=None, legend_loc='best', legend_ncol=1,
               figsize=[8, 8], ax=None, ylim=None):
     ''' Plot PSDs with scaling slopes
 
@@ -619,7 +771,81 @@ def plot_psds(psds, freqs, archive_type='glacier ice',
     ax.xaxis.set_major_formatter(FormatStrFormatter('%g'))
     ax.set_xlim([np.min(period_ticks), np.max(period_ticks)])
     plt.gca().invert_xaxis()
-    ax.legend(loc=legend_loc)
+    ax.legend(loc=legend_loc, ncol=legend_ncol)
+
+    return ax
+
+
+def plot_psds_dist(psds, freqs, archive_type='glacier ice',
+              period_ranges=[(1/200, 1/20), (1/8, 1/2)], period_names=[r'$\beta_D$', r'$\beta_I$'],
+              period_ticks=[2, 5, 10, 20, 50, 100, 200, 500], title=None, legend_loc='best', legend_ncol=1,
+              figsize=[8, 8], ax=None, ylim=None):
+    ''' Plot PSDs with scaling slopes
+
+    Args:
+        psds (2d array): a Pandas DataFrame
+        freqs (array): frequency vector for spectral analysis
+        period_ranges (list of tuples): the period range over which to calculate the scaling slope
+
+    Returns:
+        ax (Axes): the PSD plot
+
+    '''
+
+    p = PAGES2k()
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+
+    sns.set(style="darkgrid", font_scale=2)
+
+    for i, psd in enumerate(psds):
+        plt.plot(1/freqs, psd, color=p.colors_dict[archive_type], alpha=0.3)
+
+
+    # plot the median of psds
+    ax.set_xscale('log', nonposy='clip')
+    ax.set_yscale('log', nonposy='clip')
+    psd_med = np.nanmedian(psds, axis=0)
+    ax.plot(1/freqs, psd_med, '-', color=sns.xkcd_rgb['denim blue'], label='Median')
+
+    n_pr = len(period_ranges)
+    f_binned_list = []
+    Y_reg_list = []
+    beta_list = []
+
+    for period_range in period_ranges:
+        beta, f_binned, psd_binned, Y_reg = Spectral.beta_estimation(psd_med, freqs, period_range[0], period_range[1])
+        f_binned_list.append(f_binned)
+        Y_reg_list.append(Y_reg)
+        beta_list.append(beta)
+
+    for i in range(n_pr):
+        if i == 0:
+            label = ''
+            for j in range(n_pr):
+                if j < n_pr-1:
+                    label += period_names[j]+' = {:.2f}, '.format(beta_list[j])
+                else:
+                    label += period_names[j]+' = {:.2f}'.format(beta_list[j])
+
+            ax.plot(1/f_binned_list[i], Y_reg_list[i], color='k', label=label)
+        else:
+            ax.plot(1/f_binned_list[i], Y_reg_list[i], color='k')
+
+    if ylim:
+        ax.set_ylim(ylim)
+
+    if title:
+        ax.set_title(title, fontweight='bold')
+
+    ax.set_ylabel('Spectral Density')
+    ax.set_xlabel('Period (years)')
+    ax.set_xticks(period_ticks)
+    ax.get_xaxis().set_major_formatter(ScalarFormatter())
+    ax.xaxis.set_major_formatter(FormatStrFormatter('%g'))
+    ax.set_xlim([np.min(period_ticks), np.max(period_ticks)])
+    plt.gca().invert_xaxis()
+    ax.legend(loc=legend_loc, ncol=legend_ncol)
 
     return ax
 
@@ -850,10 +1076,12 @@ def plot_beta_hist(df_beta, archives,
         n_I = np.size(beta_I)
         n_D = np.size(beta_D)
 
-        g1 = sns.kdeplot(beta_I, shade=False, color=color, linestyle='--', label=r'$\{}$ ({} records)'.format(beta_I_name, n_I))
-        g1.axvline(x=med_I, ymin=0, ymax=0.1, linewidth=1, color=color, linestyle='--')
-        g2 = sns.kdeplot(beta_D, shade=False, color=color, linestyle='-', label=r'$\{}$ ({} records)'.format(beta_D_name, n_D))
-        g2.axvline(x=med_D, ymin=0, ymax=0.1, linewidth=1, color=color, linestyle='-')
+        g1 = sns.kdeplot(beta_D, shade=False, color=color, linestyle='-',
+                         label=r'$\{}$ = {:.2f} ({} records)'.format(beta_D_name, med_D, n_D))
+        g1.axvline(x=med_D, ymin=0, ymax=0.1, linewidth=1, color=color, linestyle='-')
+        g2 = sns.kdeplot(beta_I, shade=False, color=color, linestyle='--',
+                         label=r'$\{}$ = {:.2f} ({} records)'.format(beta_I_name, med_I, n_I))
+        g2.axvline(x=med_I, ymin=0, ymax=0.1, linewidth=1, color=color, linestyle='--')
 
         if xlim:
             g1.set(xlim=xlim)
@@ -1025,3 +1253,67 @@ def plot_wavelet_summary(df_row, freqs=None, tau=None, c1=1/(8*np.pi**2), c2=1e-
     plt.legend(fontsize=15, bbox_to_anchor=(0.1, -0.3), loc='lower left', ncol=1)
 
     return fig
+
+
+def plot_ols(ys_proxy, ts_proxy, ys_obs, ts_obs, title='',
+             proxy_label='proxy', obs_label='instrument'):
+    ys_proxy_overlap, ys_obs_overlap, time_overlap = overlap_ts(ys_proxy, ts_proxy, ys_obs, ts_obs)
+
+    ys_proxy_overlap_std, _, _ = Timeseries.standardize(ys_proxy_overlap)
+    ys_obs_overlap_std, _, _ = Timeseries.standardize(ys_obs_overlap)
+
+    model = ols_ts(ys_proxy_overlap_std, time_overlap, ys_obs_overlap_std, time_overlap)
+    #  model = ols_ts(ys_proxy_overlap, time_overlap, ys_obs_overlap, time_overlap)
+    results = model.fit()
+    Y_reg = model.predict(results.params)
+
+    # plot
+    title_font = {'fontname': 'Arial', 'size': '24', 'color': 'black', 'weight': 'normal', 'verticalalignment': 'bottom'}
+
+    gs = gridspec.GridSpec(6, 12)
+    gs.update(wspace=2, hspace=2)
+
+    fig = plt.figure(figsize=[12, 12])
+    sns.set(style='ticks', font_scale=1.5)
+    ax1 = plt.subplot(gs[0:2, :])
+    ax1.plot(time_overlap, ys_proxy_overlap_std, '-o', label=proxy_label)
+    ax1.plot(time_overlap, ys_obs_overlap_std, '-o', label=obs_label)
+    ax1.set_ylabel('Standardized value')
+    ax1.set_xlabel('Year (AD)')
+    ax1.grid()
+    #  ax1.legend(fontsize=15, bbox_to_anchor=(1.2, 1), loc='upper right', ncol=1)
+    ax1.legend(ncol=2)
+    ax1.set_title(title, **title_font)
+
+    sns.set(style='darkgrid', font_scale=1.5)
+    ax2 = plt.subplot(gs[2:5, 0:6])
+    ax2.scatter(ys_proxy_overlap_std, ys_obs_overlap_std, alpha=0.5)
+    ax2.set_xlabel(proxy_label)
+    ax2.set_ylabel(obs_label)
+    sort_order = np.argsort(ys_proxy_overlap_std)
+    ax2.plot(ys_proxy_overlap_std[sort_order], Y_reg[sort_order], '--',
+             label=r'R$^2$ = {:.2f}'.format(results.rsquared),
+             #  label=r'R$^2$ = {:.2f}, slope = {:.2f}'.format(results.rsquared, results.params[1]),
+             color= sns.xkcd_rgb["medium green"])
+    ax2.set_title('Linear regression')
+    ax2.legend()
+
+    ax3 = plt.subplot(gs[2:5, 6:])
+    ax3.yaxis.tick_right()
+    ax3.yaxis.set_label_position("right")
+    QQ = ProbPlot(results.resid)
+    QQ.qqplot(line='45', alpha=0.5, color=sns.xkcd_rgb["denim blue"], lw=1, ax=ax3)
+    ax3.set_title('QQ plot of residuals')
+
+    return fig
+
+
+def plot_composite(df):
+    ts = np.asarray(df.index)
+    ys_median = np.asarray(df['median'])
+    ys_min = np.asarray(df['min'])
+    ys_max = np.asarray(df['min'])
+    n_value = np.asarray(df['value'].shape[0])
+
+    fig = plt.figure(figsize=[12, 12])
+    sns.set(style='ticks', font_scale=1.5)
