@@ -8,6 +8,7 @@ import lipd as lpd
 import pandas as pd
 import numpy as np
 from scipy import spatial
+from scipy.stats.mstats import mquantiles
 import xarray as xr
 import netCDF4
 from datetime import datetime
@@ -275,11 +276,11 @@ def annualize_ts(ys, ts):
     return ys_ann, year_int
 
 
-def bin_ts(ys, ts, bin_vector=None, bin_width=10, clean_ts=True):
+def smooth_ts(ys, ts, bin_vector=None, bin_width=10):
     if bin_vector is None:
         bin_vector = np.arange(
             bin_width*(np.min(ts)//bin_width),
-            bin_width*(np.max(ts)//bin_width+1),
+            bin_width*(np.max(ts)//bin_width+2),
             step=bin_width)
 
     ts_bin = (bin_vector[1:] + bin_vector[:-1])/2
@@ -292,10 +293,23 @@ def bin_ts(ys, ts, bin_vector=None, bin_width=10, clean_ts=True):
         t_range = (ts >= t_start) & (ts < t_end)
         ys_bin[i] = np.average(ys[t_range], axis=0)
 
-    if clean_ts:
-        ys_bin, ts_bin = Timeseries.clean_ts(ys_bin, ts_bin)
+    return ys_bin, ts_bin, bin_vector
 
-    return ys_bin, ts_bin
+
+def bin_ts(ys, ts, bin_vector=None, bin_width=10, resolution=1):
+    ys_smooth, ts_smooth, bin_vector = smooth_ts(ys, ts, bin_vector=bin_vector, bin_width=bin_width)
+
+    bin_vector_finer = np.arange(np.min(bin_vector), np.max(bin_vector)+1, step=resolution)
+    bin_value = np.zeros(bin_vector_finer.size)
+
+    n_bin = np.size(ts_smooth)
+    for i in range(n_bin):
+        t_start = bin_vector[i]
+        t_end = bin_vector[i+1]
+        t_range = (bin_vector_finer >= t_start) & (bin_vector_finer <= t_end)
+        bin_value[t_range] = ys_smooth[i]
+
+    return bin_value, bin_vector_finer
 
 
 def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path=None, standardize=False):
@@ -392,9 +406,11 @@ def df2psd_mtm(df, value_name='paleoData_values', time_name='year', save_path=No
     return psds, freqs
 
 
-def df2composite(df, value_name='paleoData_values', time_name='year', bin_width=10,
-                 gaussianize=False, standardize=False):
-    df_comp = pd.DataFrame(columns=['time', 'value', 'min', 'max', 'median', 'mean'])
+def df2composite(df, value_name='paleoData_values', time_name='year',
+                 bin_width=10, lower_bd=10,
+                 gaussianize=False, standardize=False,
+                 n_bootstraps=10000, stat_func=np.nanmedian, nproc=8):
+    df_comp = pd.DataFrame(columns=['time', 'value', 'min', 'max', 'mean', 'median', 'bootstrap_medians'])
     df_comp.set_index('time', inplace=True)
 
     for index, row in df.iterrows():
@@ -406,7 +422,7 @@ def df2composite(df, value_name='paleoData_values', time_name='year', bin_width=
         if gaussianize:
             Xo = wa.preprocess(Xo, to, gaussianize=True)
 
-        Xo_bin, to_bin = bin_ts(Xo, to, bin_width=bin_width)
+        Xo_bin, to_bin, _ = smooth_ts(Xo, to, bin_width=bin_width)
         for i, t in enumerate(to_bin):
             ind_list = list(df_comp.index)
             if t not in ind_list:
@@ -419,10 +435,17 @@ def df2composite(df, value_name='paleoData_values', time_name='year', bin_width=
 
     df_comp = df_comp.sort_index()
     for index, row in df_comp.iterrows():
-        row['min'] = np.nanmin(row['value'])
-        row['max'] = np.nanmax(row['value'])
-        row['mean'] = np.nanmean(row['value'])
-        row['median'] = np.nanmedian(row['value'])
+        samples = row['value']
+        row['min'] = np.nanmin(samples)
+        row['max'] = np.nanmax(samples)
+        row['mean'] = np.nanmean(samples)
+        row['median'] = np.nanmedian(samples)
+        #  row['bootstrap_medians'] = bootstrap(samples, n_bootstraps=n_bootstraps, stat_func=stat_func, nproc=nproc)
+
+        if samples.shape[0] > 1:
+            row['bootstrap_medians'] = bootstrap(samples, n_bootstraps=n_bootstraps, stat_func=stat_func, nproc=nproc)
+        else:
+            row['bootstrap_medians'] = row['median']
 
     return df_comp
 
@@ -450,7 +473,7 @@ def bootstrap(samples, n_bootstraps=1000, stat_func=np.nanmedian, nproc=8):
 
 def df2comp_ols(df, inst_temp_path,
                 value_name='paleoData_values', time_name='year',
-                bin_width=10, lower_bd=3):
+                bin_width=10, lower_bd=10):
     df_proxy = df_append_nearest_obs(df, inst_temp_path)
     df_comp = df2composite(df_proxy, bin_width=bin_width, value_name=value_name, time_name=time_name)
     df_comp = clean_composite(df_comp, lower_bd=lower_bd)
@@ -474,7 +497,7 @@ def df2comp_ols(df, inst_temp_path,
     return ys_proxy, ts_proxy, ys_obs, ts_obs, slope, R2
 
 
-def clean_composite(df, lower_bd=3):
+def clean_composite(df, lower_bd=10):
     for index, row in df.iterrows():
         if row['value'].shape[0] < lower_bd:
             df = df.drop(index)
@@ -482,7 +505,7 @@ def clean_composite(df, lower_bd=3):
     return df
 
 
-def fill_nan_composite(df, lower_bd=3):
+def fill_nan_composite(df, lower_bd=10):
     for index, row in df.iterrows():
         if row['value'].shape[0] < lower_bd:
             df.loc[index, 'min'] = np.nan
@@ -1333,12 +1356,71 @@ def plot_ols(ys_proxy, ts_proxy, ys_obs, ts_obs, title='',
     return fig
 
 
-def plot_composite(df):
-    ts = np.asarray(df.index)
-    ys_median = np.asarray(df['median'])
-    ys_min = np.asarray(df['min'])
-    ys_max = np.asarray(df['min'])
-    n_value = np.asarray(df['value'].shape[0])
+def plot_composite(df, archive_type='coral',  title='', bin_width=10, lower_bd=10,
+                   left_ylim=[-2, 2], xlim=[0, 2000], right_ylim=[0, 80],
+                   n_right_yticks=9):
+    title_font = {'fontname': 'Arial', 'size': '24', 'color': 'black', 'weight': 'normal', 'verticalalignment': 'bottom'}
 
-    fig = plt.figure(figsize=[12, 12])
-    sns.set(style='ticks', font_scale=1.5)
+    ts = np.asarray(df.index)
+    n_ts = ts.shape[0]
+    ys_median = np.asarray(df['median'], dtype=float)
+    ys_bootstrap = df['bootstrap_medians'].values
+    ys_quantile_median = np.zeros(n_ts)
+    ys_quantile_low = np.zeros(n_ts)
+    ys_quantile_high = np.zeros(n_ts)
+    for i, ys_boot in enumerate(ys_bootstrap):
+        ys_quantile_median[i] = mquantiles(ys_boot, 0.5)
+        ys_quantile_low[i] = mquantiles(ys_boot, 0.025)
+        ys_quantile_high[i] = mquantiles(ys_boot, 0.975)
+
+    n_value = np.asarray(df['value'].apply(len).values)
+
+    # bin data for plot
+    bin_quantile_median, bin_time = bin_ts(ys_quantile_median, ts, bin_width=bin_width)
+    bin_quantile_low, bin_time = bin_ts(ys_quantile_low, ts, bin_width=bin_width)
+    bin_quantile_high, bin_time = bin_ts(ys_quantile_high, ts, bin_width=bin_width)
+    bin_nvalue, bin_time = bin_ts(n_value, ts, bin_width=bin_width)
+
+    # plot
+    p = PAGES2k()
+    sns.set(style='ticks', font_scale=2)
+    proxy_color = p.colors_dict[archive_type]
+    num_rec_color = sns.xkcd_rgb['grey']
+
+    fig, ax1 = plt.subplots(figsize=[12, 6])
+
+    ax1.plot(bin_time, bin_quantile_median, ':', color=proxy_color)
+    selector = bin_nvalue >= lower_bd
+    ax1.plot(bin_time[selector], bin_quantile_median[selector], '-', color=proxy_color)
+    ax1.fill_between(bin_time, bin_quantile_low, bin_quantile_high, color=proxy_color, alpha=0.2)
+
+    ax1.yaxis.grid('on', color=proxy_color, alpha=0.5)
+    ax1.set_ylabel('proxy', color=proxy_color)
+    ax1.tick_params('y', colors=proxy_color)
+    ax1.set_xlabel('year (AD)')
+    ax1.spines['left'].set_color(proxy_color)
+    ax1.spines['right'].set_color(num_rec_color)
+    ax1.spines['bottom'].set_color(proxy_color)
+    ax1.spines['bottom'].set_alpha(0.5)
+    ax1.spines['top'].set_visible(False)
+    ax1.set_ylim(left_ylim)
+    ax1.set_xlim(xlim)
+    ax1.set_yticks(np.linspace(-2, 2, 5))
+    ax1.set_xticks(np.linspace(0, 2000, 5))
+    ax1.set_title(title, **title_font)
+
+    ax2 = ax1.twinx()
+    ax2.bar(ts, n_value, bin_width*0.9, color=num_rec_color, alpha=0.2)
+    ax2.set_ylabel('# records', color=num_rec_color)
+    ax2.tick_params(axis='y', colors=num_rec_color)
+    ax2.spines['bottom'].set_visible(False)
+    ax2.spines['top'].set_visible(False)
+    ax2.set_ylim(right_ylim)
+    #  ax2.set_yticks(np.linspace(ax2.get_yticks()[0], ax2.get_yticks()[-1], len(ax1.get_yticks())))
+    ax2.set_yticks(np.linspace(ax2.get_yticks()[0], ax2.get_yticks()[-1], n_right_yticks))
+    ax2.grid('off')
+
+    ax1.set_zorder(ax2.get_zorder()+1)
+    ax1.patch.set_visible(False)
+
+    return fig
