@@ -410,7 +410,7 @@ def df2composite(df, value_name='paleoData_values', time_name='year',
                  bin_width=10,
                  gaussianize=False, standardize=False,
                  n_bootstraps=10000, stat_func=np.nanmedian, nproc=8):
-    df_comp = pd.DataFrame(columns=['time', 'value', 'min', 'max', 'mean', 'median', 'bootstrap_medians'])
+    df_comp = pd.DataFrame(columns=['time', 'value', 'min', 'max', 'mean', 'median', 'bootstrap_stats'])
     df_comp.set_index('time', inplace=True)
 
     for index, row in df.iterrows():
@@ -419,10 +419,10 @@ def df2composite(df, value_name='paleoData_values', time_name='year',
             continue
 
         wa = Spectral.WaveletAnalysis()
-        if standardize:
-            Xo = wa.preprocess(Xo, to, standardize=True)
         if gaussianize:
             Xo = wa.preprocess(Xo, to, gaussianize=True)
+        if standardize:
+            Xo = wa.preprocess(Xo, to, standardize=True)
 
         Xo_bin, to_bin, _ = smooth_ts(Xo, to, bin_width=bin_width)
         for i, t in enumerate(to_bin):
@@ -445,9 +445,9 @@ def df2composite(df, value_name='paleoData_values', time_name='year',
         #  row['bootstrap_medians'] = bootstrap(samples, n_bootstraps=n_bootstraps, stat_func=stat_func, nproc=nproc)
 
         if samples.shape[0] > 1:
-            row['bootstrap_medians'] = bootstrap(samples, n_bootstraps=n_bootstraps, stat_func=stat_func, nproc=nproc)
+            row['bootstrap_stats'] = bootstrap(samples, n_bootstraps=n_bootstraps, stat_func=stat_func, nproc=nproc)
         else:
-            row['bootstrap_medians'] = row['median']
+            row['bootstrap_stats'] = row['median']
 
     return df_comp
 
@@ -455,7 +455,7 @@ def df2composite(df, value_name='paleoData_values', time_name='year',
 def df2quantile_median(df):
     ts = np.asarray(df.index)
     n_ts = ts.shape[0]
-    ys_bootstrap = df['bootstrap_medians'].values
+    ys_bootstrap = df['bootstrap_stats'].values
     ys_quantile_median = np.zeros(n_ts)
     for i, ys_boot in enumerate(ys_bootstrap):
         ys_quantile_median[i] = mquantiles(ys_boot, 0.5)
@@ -463,7 +463,7 @@ def df2quantile_median(df):
     return ys_quantile_median, ts
 
 
-def bootstrap(samples, n_bootstraps=1000, stat_func=np.nanmedian, nproc=8):
+def bootstrap(samples, n_bootstraps=1000, stat_func=np.nanmean, nproc=8):
     n_samples = np.shape(samples)[0]
 
     if nproc == 1 :
@@ -494,8 +494,10 @@ def df2comp_ols(df, inst_temp_path,
     df_comp_obs = df2composite(df_proxy, bin_width=bin_width,
                                gaussianize=False, standardize=False,
                                value_name='obs_temp', time_name='obs_year')
-    ys_proxy, ts_proxy = df2quantile_median(df_comp_proxy)
-    ys_obs, ts_obs = df2quantile_median(df_comp_obs)
+    #  ys_proxy, ts_proxy = df2quantile_median(df_comp_proxy)
+    #  ys_obs, ts_obs = df2quantile_median(df_comp_obs)
+    ys_proxy, ts_proxy = df_comp_proxy['median'].values, np.asarray(df_comp_proxy.index)
+    ys_obs, ts_obs = df_comp_obs['median'].values, np.asarray(df_comp_obs.index)
 
     # OLS
     ys_proxy_overlap, ys_obs_overlap, time_overlap = overlap_ts(ys_proxy, ts_proxy, ys_obs, ts_obs)
@@ -1373,7 +1375,7 @@ def plot_ols(ys_proxy, ts_proxy, ys_obs, ts_obs, title='',
 
 
 def plot_composite(df, archive_type='coral',  title='', bin_width=10, lower_bd=10,
-                   intercept=0, slope=1, proxy_label='proxy', legend_loc='upper left',
+                   intercept=0, slope=1, R2=np.nan, proxy_label='proxy', legend_loc='upper left',
                    plot_target=False, target_ys=None, target_ts=None, target_label='instrumental',
                    left_ylim=[-2, 2], xlim=[0, 2000], right_ylim=[0, 80],
                    n_right_yticks=None):
@@ -1382,7 +1384,7 @@ def plot_composite(df, archive_type='coral',  title='', bin_width=10, lower_bd=1
     ts = np.asarray(df.index)
     n_ts = ts.shape[0]
     ys_median = np.asarray(df['median'], dtype=float)
-    ys_bootstrap = df['bootstrap_medians'].values
+    ys_bootstrap = df['bootstrap_stats'].values
     ys_quantile_median = np.zeros(n_ts)
     ys_quantile_low = np.zeros(n_ts)
     ys_quantile_high = np.zeros(n_ts)
@@ -1422,7 +1424,7 @@ def plot_composite(df, archive_type='coral',  title='', bin_width=10, lower_bd=1
     ax1.plot(bin_time, bin_quantile_median, ':', color=proxy_color)
     selector = bin_nvalue >= lower_bd
     ax1.plot(bin_time[selector], bin_quantile_median[selector], '-', color=proxy_color,
-             label='{}, conversion factor = {:.3f}'.format(proxy_label, slope))
+             label='{}, conversion factor = {:.3f}, r = {:.3f}'.format(proxy_label, slope, np.sqrt(R2)))
     ax1.fill_between(bin_time, bin_quantile_low, bin_quantile_high, color=proxy_color, alpha=0.2)
     ax1.plot(bin_target_ts, bin_target_ys, '-', color='red', label=target_label)
 
@@ -1479,7 +1481,7 @@ def make_composite(df_proxy, inst_temp_path, fig_save_path=None,
                                                                            bin_width=bin_width)
     bin_target_ys, bin_target_ts = bin_ts(ys_obs, ts_obs, bin_width=bin_width)
 
-    fig = plot_composite(df_comp_proxy, archive_type=archive_type,
+    fig = plot_composite(df_comp_proxy, archive_type=archive_type, R2=R2,
                          slope=slope, intercept=intercept, right_ylim=[0, 10*(n_records//10+1)],
                          plot_target=True, target_ys=ys_obs, target_ts=ts_obs,
                          title=title,
@@ -1488,8 +1490,8 @@ def make_composite(df_proxy, inst_temp_path, fig_save_path=None,
     if fig_save_path:
         fig.savefig(fig_save_path, bbox_inches='tight')
         plt.close(fig)
-        return slope, R2
+        return ys_proxy, ts_proxy, slope, R2
 
     else:
-        return slope, R2, fig
+        return ys_proxy, ts_proxy, slope, R2, fig
 
