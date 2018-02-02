@@ -491,8 +491,23 @@ def bootstrap(samples, n_bootstraps=1000, stat_func=np.nanmean, nproc=8):
 
 def df2comp_ols(df, inst_temp_path, stat_func=np.nanmean,
                 value_name='paleoData_values', time_name='year',
+                netcdf_lat_name='latitude',
+                netcdf_lon_name='longitude',
+                netcdf_time_name='year',
+                netcdf_temp_name='temperature_anomaly',
+                ensemble_num=None,
                 bin_width=10):
-    df_proxy = df_append_nearest_obs(df, inst_temp_path)
+    df_proxy = df_append_nearest_obs(df, inst_temp_path,
+                                     lat_name=netcdf_lat_name,
+                                     lon_name=netcdf_lon_name,
+                                     time_name=netcdf_time_name,
+                                     temp_name=netcdf_temp_name,
+                                     ensemble_num=ensemble_num,
+                                     )
+    for index, row in df_proxy.iterrows():
+        if row['obs_temp'].shape[0] < 1:
+            df_proxy = df_proxy.drop(index)
+
     df_comp_proxy = df2composite(df_proxy, bin_width=bin_width,
                            gaussianize=True, standardize=True, stat_func=stat_func,
                            value_name=value_name, time_name=time_name)
@@ -611,10 +626,16 @@ def ols_ts(ys_proxy, ts_proxy, ys_obs, ts_obs):
     return ols_model
 
 
-def df_append_nearest_obs(df, inst_temp_path):
+def df_append_nearest_obs(df, inst_temp_path,
+                          lat_name='latitude',
+                          lon_name='longitude',
+                          time_name='year',
+                          temp_name='temperature_anomaly',
+                          ensemble_num=None,
+                          ):
     # load instrumental temperature data
     lat, lon, year, temp = load_CESM_netcdf(
-        inst_temp_path, ['latitude', 'longitude', 'year', 'temperature_anomaly'], decode_times=False
+        inst_temp_path, [lat_name, lon_name, time_name, temp_name], decode_times=False
     )
 
     # preprocess df
@@ -627,15 +648,23 @@ def df_append_nearest_obs(df, inst_temp_path):
     for index, row in df.iterrows():
         tgt_lat, tgt_lon = row2latlon(row)
         lat_ind, lon_ind = find_closest_loc(lat, lon, tgt_lat, tgt_lon)
-        df.at[index, 'obs_temp'], df.at[index, 'obs_year'] = Timeseries.clean_ts(temp[:, lat_ind, lon_ind], year)
+        if ensemble_num is None:
+            df.at[index, 'obs_temp'], df.at[index, 'obs_year'] = Timeseries.clean_ts(temp[:, lat_ind, lon_ind], year)
+        else:
+            df.at[index, 'obs_temp'], df.at[index, 'obs_year'] = Timeseries.clean_ts(temp[:, ensemble_num,
+                                                                                          lat_ind, lon_ind], year)
 
     return df
 
 
-def df_append_converted_temp(df, inst_temp_path, bin_width=10, yr_range=None):
+def df_append_converted_temp(df, inst_temp_path, bin_width=10, yr_range=None,
+                             lat_name='latitude',
+                             lon_name='longitude',
+                             time_name='year',
+                             temp_name='temperature_anomaly'):
     # load instrumental temperature data
     lat, lon, year, temp = load_CESM_netcdf(
-        inst_temp_path, ['latitude', 'longitude', 'year', 'temperature_anomaly'], decode_times=False
+        inst_temp_path, [lat_name, lon_name, time_name, temp_name], decode_times=False
     )
 
     # preprocess df
@@ -1453,8 +1482,8 @@ def plot_composite(df, archive_type='coral',  title='', bin_width=10, lower_bd=1
     ax1.spines['top'].set_visible(False)
     ax1.set_ylim(left_ylim)
     ax1.set_xlim(xlim)
-    ax1.set_yticks(np.linspace(-2, 2, 5))
-    ax1.set_xticks(np.linspace(0, 2000, 5))
+    ax1.set_yticks(np.linspace(np.min(left_ylim), np.max(left_ylim), 5))
+    ax1.set_xticks(np.linspace(np.min(xlim), np.max(xlim), 5))
     ax1.set_title(title, **title_font)
     ax1.legend(loc=legend_loc)
 
@@ -1480,10 +1509,21 @@ def make_composite(df_proxy, inst_temp_path, fig_save_path=None,
                    archive_type='coral',  title='', stat_func=np.nanmean,
                    intercept=0, slope=1, proxy_label='proxy', legend_loc='upper left',
                    plot_target=False, target_ys=None, target_ts=None, target_label='instrumental',
+                   netcdf_lat_name='latitude',
+                   netcdf_lon_name='longitude',
+                   netcdf_time_name='year',
+                   netcdf_temp_name='temperature_anomaly',
+                   ensemble_num=None,
                    left_ylim=[-2, 2], xlim=[0, 2000], right_ylim=[0, 80],
                    n_right_yticks=None):
     n_records = df_proxy.shape[0]
-    df_proxy_obs = df_append_nearest_obs(df_proxy, inst_temp_path)
+    df_proxy_obs = df_append_nearest_obs(df_proxy, inst_temp_path,
+                                         lat_name=netcdf_lat_name,
+                                         lon_name=netcdf_lon_name,
+                                         time_name=netcdf_time_name,
+                                         temp_name=netcdf_temp_name,
+                                         ensemble_num=ensemble_num,
+                                         )
     df_comp_proxy = df2composite(df_proxy_obs, bin_width=bin_width, stat_func=stat_func,
                                  gaussianize=True, standardize=True,
                                  n_bootstraps=n_bootstraps)
@@ -1492,14 +1532,19 @@ def make_composite(df_proxy, inst_temp_path, fig_save_path=None,
                                gaussianize=False, standardize=False,
                                n_bootstraps=n_bootstraps)
     ys_proxy, ts_proxy, ys_obs, ts_obs, intercept, slope, R2 = df2comp_ols(df_proxy, inst_temp_path,
+                                                                           netcdf_lat_name=netcdf_lat_name,
+                                                                           netcdf_lon_name=netcdf_lon_name,
+                                                                           netcdf_time_name=netcdf_time_name,
+                                                                           netcdf_temp_name=netcdf_temp_name,
+                                                                           ensemble_num=ensemble_num,
                                                                            stat_func=stat_func,
                                                                            bin_width=bin_width)
     bin_target_ys, bin_target_ts = bin_ts(ys_obs, ts_obs, bin_width=bin_width)
 
     fig = plot_composite(df_comp_proxy, archive_type=archive_type, R2=R2, stat_func=stat_func,
-                         slope=slope, intercept=intercept, right_ylim=[0, 10*(n_records//10+1)],
+                         slope=slope, intercept=intercept,
                          plot_target=True, target_ys=ys_obs, target_ts=ts_obs,
-                         title=title,
+                         title=title, left_ylim=left_ylim, xlim=xlim, right_ylim=[0, 10*(n_records//10+1)],
                          bin_width=bin_width)
 
     if fig_save_path:
