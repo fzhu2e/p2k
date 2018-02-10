@@ -67,7 +67,7 @@ class PAGES2k(object):
 
 
 def lipd2pkl(lipd_file_dir, pkl_file_path):
-    ''' Convert a bunch of PAGES2k LiPD files to a pickle file to boost the speed of loading data
+    ''' Convert a bunch of PAGES2k LiPD files to a pickle file of Pandas DataFrame to boost data loading
 
     Args:
         lipd_file_dir (str): the path of the PAGES2k LiPD files
@@ -751,7 +751,7 @@ def df_append_beta(df, freqs, psds=None, save_path=None, value_name='paleoData_v
 
         beta_list = []
         for psd in psds:
-            beta, f_binned, psd_binned, Y_reg = Spectral.beta_estimation(psd, freqs, period_range[0], period_range[1])
+            beta, f_binned, psd_binned, Y_reg, stderr = Spectral.beta_estimation(psd, freqs, period_range[0], period_range[1])
             beta_list.append(beta)
 
         df_new[period_names[i]] = beta_list
@@ -782,14 +782,14 @@ def df_append_beta_mtm(df, psds=None, freqs=None, save_path=None, value_name='pa
 
     '''
     if psds is None or freqs is None:
-        psds, freqs = df2psd_mtm(df, freqs, value_name=value_name, time_name=time_name)
+        psds, freqs = df2psd_mtm(df, value_name=value_name, time_name=time_name)
 
     df_new = df.copy()
     for i, period_range in enumerate(period_ranges):
 
         beta_list = []
         for j, psd in enumerate(psds):
-            beta, f_binned, psd_binned, Y_reg = Spectral.beta_estimation(psds[j], freqs[j], period_range[0], period_range[1])
+            beta, f_binned, psd_binned, Y_reg, stderr = Spectral.beta_estimation(psds[j], freqs[j], period_range[0], period_range[1])
             beta_list.append(beta)
 
         df_new[period_names[i]] = beta_list
@@ -844,7 +844,7 @@ def plot_psds(psds, freqs, archive_type='glacier ice',
     beta_list = []
 
     for period_range in period_ranges:
-        beta, f_binned, psd_binned, Y_reg = Spectral.beta_estimation(psd_med, freqs, period_range[0], period_range[1])
+        beta, f_binned, psd_binned, Y_reg, stderr = Spectral.beta_estimation(psd_med, freqs, period_range[0], period_range[1])
         f_binned_list.append(f_binned)
         Y_reg_list.append(Y_reg)
         beta_list.append(beta)
@@ -918,7 +918,7 @@ def plot_psds_dist(psds, freqs, archive_type='glacier ice',
     beta_list = []
 
     for period_range in period_ranges:
-        beta, f_binned, psd_binned, Y_reg = Spectral.beta_estimation(psd_med, freqs, period_range[0], period_range[1])
+        beta, f_binned, psd_binned, Y_reg, stderr = Spectral.beta_estimation(psd_med, freqs, period_range[0], period_range[1])
         f_binned_list.append(f_binned)
         Y_reg_list.append(Y_reg)
         beta_list.append(beta)
@@ -1199,7 +1199,7 @@ def plot_beta_hist(df_beta, archives,
     return fig
 
 
-def plot_wavelet_summary(df_row, freqs=None, tau=None, c1=1/(8*np.pi**2), c2=1e-3, nMC=200, nproc=8, detrend='no',
+def plot_wavelet_summary(df_row, c1=1/(8*np.pi**2), c2=1e-3, nMC=200, nproc=8, detrend='no',
                          gaussianize=False, standardize=True, levels=None,
                          anti_alias=False, period_ticks=None,
                          psd_lmstyle='-', psd_lim=None, period_I=[1/8, 1/2], period_D=[1/200, 1/20]):
@@ -1232,7 +1232,8 @@ def plot_wavelet_summary(df_row, freqs=None, tau=None, c1=1/(8*np.pi**2), c2=1e-
     dt_med = np.median(np.diff(ts))
     ylim_min = dt_med*2
     tau = np.linspace(np.min(ts), np.max(ts), 501)
-    freqs = np.linspace(1/1000, 1/2, 501)
+    #  freqs = np.linspace(1/1000, 1/2, 501)
+    freqs = None
 
     if np.mean(np.diff(ts)) < 1:
         warnings.warn('The time series will be annualized due to mean of dt less than one year.')
@@ -1332,8 +1333,8 @@ def plot_wavelet_summary(df_row, freqs=None, tau=None, c1=1/(8*np.pi**2), c2=1e-
     ax3.set_yticks(period_ticks)
     ax3.set_ylim([np.min(period_ticks), np.max(coi)])
 
-    beta_1, f_binned_1, psd_binned_1, Y_reg_1 = Spectral.beta_estimation(psd, freqs, period_I[0], period_I[1])
-    beta_2, f_binned_2, psd_binned_2, Y_reg_2 = Spectral.beta_estimation(psd, freqs, period_D[0], period_D[1])
+    beta_1, f_binned_1, psd_binned_1, Y_reg_1, stderr_1 = Spectral.beta_estimation(psd, freqs, period_I[0], period_I[1])
+    beta_2, f_binned_2, psd_binned_2, Y_reg_2, stderr_2 = Spectral.beta_estimation(psd, freqs, period_D[0], period_D[1])
     ax3.plot(Y_reg_1, 1/f_binned_1, color='k',
              label=r'$\beta_I$ = {:.2f}'.format(beta_1) + ', ' + r'$\beta_D$ = {:.2f}'.format(beta_2))
     #  ax3.plot(Y_reg_1, 1/f_binned_1, color='k')
