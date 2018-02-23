@@ -315,7 +315,8 @@ def bin_ts(ys, ts, bin_vector=None, bin_width=10, resolution=1):
     return bin_value, bin_vector_finer
 
 
-def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path=None, standardize=False):
+def df2psd(df, freqs=None, value_name='paleoData_values', time_name='year', save_path=None,
+           standardize=False, gaussianize=False):
     ''' Calculate the power spectral densities of a Pandas DataFrame PAGES2k dataset using WWZ method
 
     Args:
@@ -332,14 +333,21 @@ def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path
 
     n_series = len(year)
     n_freqs = np.size(freqs)
-    psds = np.ndarray(shape=(n_series, n_freqs))
+    psd_list = []
+    freqs_list = []
 
     for k in tqdm(range(n_series), desc='Processing time series'):
         Xo = np.asarray(paleoData_values[k], dtype=np.float)
         to = np.asarray(year[k], dtype=np.float)
         Xo, to = Timeseries.clean_ts(Xo, to)
-        tau = np.linspace(np.min(to), np.max(to), 501)
-        psds[k, :], _, _, _ = Spectral.wwz_psd(Xo, to, freqs=freqs, tau=tau, c=1e-3, nproc=16, nMC=0, standardize=standardize)
+        if np.mean(np.diff(to)) < 1:
+            warnings.warn('The time series will be annualized due to mean of dt less than one year.')
+            Xo, to = annualize_ts(Xo, to)
+        tau = np.linspace(np.min(to), np.max(to), np.min([np.size(to)//2, 501]))
+        res_wwz = Spectral.wwz_psd(Xo, to, freqs=freqs, tau=tau, c=1e-3, nproc=16, nMC=0,
+                                   standardize=standardize, gaussianize=gaussianize)
+        psd_list.append(res_wwz.psd)
+        freqs_list.append(res_wwz.freqs)
 
     if save_path:
         print('p2k >>> Saving pickle file at: {}'.format(save_path))
@@ -349,11 +357,11 @@ def df2psd(df, freqs, value_name='paleoData_values', time_name='year', save_path
             os.makedirs(dir_name)
 
         with open(save_path, 'wb') as f:
-            pickle.dump(psds, f)
+            pickle.dump([psd_list, freqs_list], f)
 
         print('p2k >>> DONE')
 
-    return psds
+    return psd_list, freqs_list
 
 
 def df2psd_mtm(df, value_name='paleoData_values', time_name='year', save_path=None, standardize=False):
@@ -730,7 +738,9 @@ def df_append_converted_temp(df, inst_temp_path, bin_width=10, yr_range=None,
     return df
 
 
-def df_append_beta(df, freqs, psds=None, save_path=None, value_name='paleoData_values', time_name='year',
+def df_append_beta(df, freqs=None, psd_list=None, freqs_list=None, save_path=None,
+                   value_name='paleoData_values', time_name='year',
+                   append_psd=False, standardize=False, gaussianize=False,
                    period_ranges=[(1/200, 1/20), (1/8, 1/2)], period_names=['beta_D', 'beta_I']
                    ):
     ''' Calculate the scaling exponent and add to a new column in the given DataFrame
@@ -743,15 +753,25 @@ def df_append_beta(df, freqs, psds=None, save_path=None, value_name='paleoData_v
         df_new (Pandas DataFrame): the DataFrame with scaling exponents added on
 
     '''
-    if psds is None:
-        psds = df2psd(df, freqs, value_name=value_name, time_name=time_name)
+    if psd_list is None or freqs_list is None:
+        psd_list, freqs_list = df2psd(df, freqs=freqs, value_name=value_name, time_name=time_name,
+                                      standardize=standardize, gaussianize=gaussianize)
 
     df_new = df.copy()
+    df_new['psd'] = np.nan
+    df_new['psd'] = df_new['psd'].astype(object)
+    df_new['freqs'] = np.nan
+    df_new['freqs'] = df_new['freqs'].astype(object)
+    if append_psd:
+        for index, row in df_new.iterrows():
+            df_new.at[index, 'psd'] = psd_list[index]
+            df_new.at[index, 'freqs'] = freqs_list[index]
+
     for i, period_range in enumerate(period_ranges):
 
         beta_list = []
-        for psd in psds:
-            beta, f_binned, psd_binned, Y_reg, stderr = Spectral.beta_estimation(psd, freqs, period_range[0], period_range[1])
+        for j, psd in enumerate(psd_list):
+            beta, f_binned, psd_binned, Y_reg, stderr = Spectral.beta_estimation(psd, freqs_list[j], period_range[0], period_range[1])
             beta_list.append(beta)
 
         df_new[period_names[i]] = beta_list
@@ -833,7 +853,7 @@ def plot_psds(psds, freqs, archive_type='glacier ice',
 
 
     # plot the median of psds
-    ax.set_xscale('log', nonposy='clip')
+    ax.set_xscale('log', nonposx='clip')
     ax.set_yscale('log', nonposy='clip')
     psd_med = np.nanmedian(psds, axis=0)
     ax.plot(1/freqs, psd_med, '-', color=sns.xkcd_rgb['denim blue'], label='Median')
@@ -874,7 +894,7 @@ def plot_psds(psds, freqs, archive_type='glacier ice',
     ax.get_xaxis().set_major_formatter(ScalarFormatter())
     ax.xaxis.set_major_formatter(FormatStrFormatter('%g'))
     ax.set_xlim([np.min(period_ticks), np.max(period_ticks)])
-    plt.gca().invert_xaxis()
+    ax.invert_xaxis()
     ax.legend(loc=legend_loc, ncol=legend_ncol)
 
     return ax
@@ -1007,9 +1027,9 @@ def plot_sites(df, title=None, lon_col='geo_meanLon', lat_col='geo_meanLat', arc
 def plot_beta_map(df_beta,
                   beta_I_name='beta_I', beta_I_title='Interannual Scaling Exponent',
                   beta_D_name='beta_D', beta_D_title='Decadal to Centennial Scaling Exponent',
-                  hist_xlim=(-3, 6), nan_color='black',
-                  cmap="RdBu_r", vmin=-1.2, vmax=2.8, n_ticks=11, n_clr=15,
-                  color_range_start=5, color_range_end=None):
+                  hist_xlim=(-3.5, 3.5), nan_color='gray',
+                  cmap="RdBu_r", vmin=-2, vmax=2, n_ticks=11, n_clr=10,
+                  color_range_start=0, color_range_end=None):
     ''' Plot beta map for beta_I and beta_D with histogram plots
 
     Args:
@@ -1136,6 +1156,8 @@ def plot_beta_map(df_beta,
     g2.set(xlim=hist_xlim)
     plt.grid()
 
+    return fig
+
 
 def plot_beta_hist(df_beta, archives,
                    beta_I_name='beta_I',
@@ -1199,6 +1221,72 @@ def plot_beta_hist(df_beta, archives,
     return fig
 
 
+def plot_psd_betahist(dfs, figsize=None, period_names=['beta_D', 'beta_I'],
+                      period_ticks=[2, 5, 10, 20, 50, 100, 200, 500]
+                      ):
+    ''' Plot the PSD as well as the distribution of beta_I and beta_D
+
+    Args:
+        dfs (a list of Pandas DataFrame): dfs for different types
+
+    Returns:
+        plot: a figure with the histagram of beta_I and beta_D with KDE distributions
+
+    '''
+    p = PAGES2k()
+
+    n_dfs = len(dfs)
+    if figsize is None:
+        figsize = [12,  4*n_dfs]
+
+    fig = plt.figure(figsize=figsize)
+
+
+    for i, df in enumerate(dfs):
+        # PSD
+        sns.set(style="darkgrid", font_scale=2)
+        ax1 = plt.subplot(n_dfs, 2, 2*i+1)
+        for index, row in df.iterrows():
+            archive_type = row['archiveType']
+            ax1.loglog(1/row['freqs'], row['psd'], color=p.colors_dict[archive_type], alpha=0.3)
+
+        ax1.set_xticks(period_ticks)
+        ax1.set_ylabel('Spectral Density')
+        ax1.set_xlabel('Period (years)')
+        ax1.set_xticks(period_ticks)
+        ax1.get_xaxis().set_major_formatter(ScalarFormatter())
+        ax1.xaxis.set_major_formatter(FormatStrFormatter('%g'))
+        ax1.set_xlim([np.min(period_ticks), np.max(period_ticks)])
+        ax1.invert_xaxis()
+        ax1.set_title('{}, {} records'.format(archive_type, len(df)), fontweight='bold')
+
+        # distribution
+        sns.set(style="ticks", font_scale=2)
+        ax2 = plt.subplot(n_dfs, 2, 2*i+2)
+        beta_I_str = period_names[1]
+        beta_D_str = period_names[0]
+        beta_I = df[beta_I_str].dropna().values
+        beta_D = df[beta_D_str].dropna().values
+        med_I = np.median(beta_I)
+        med_D = np.median(beta_D)
+        n_I = np.size(beta_I)
+        n_D = np.size(beta_D)
+        g1 = sns.kdeplot(beta_D, shade=False, color=p.colors_dict[archive_type], linestyle='-', ax=ax2,
+                         label=r'$\{}$ = {:.2f} ({} records)'.format(beta_D_str, med_D, n_D))
+        g1.axvline(x=med_D, ymin=0, ymax=0.1, linewidth=1, color=p.colors_dict[archive_type], linestyle='-')
+        g2 = sns.kdeplot(beta_I, shade=False, color=p.colors_dict[archive_type], linestyle='--', ax=ax2,
+                         label=r'$\{}$ = {:.2f} ({} records)'.format(beta_I_str,  med_I, n_I))
+        g2.axvline(x=med_I, ymin=0, ymax=0.1, linewidth=1, color=p.colors_dict[archive_type], linestyle='--')
+        ax2.legend(fontsize=18, bbox_to_anchor=(1.4, 1), loc='upper right', ncol=1)
+        ax2.set_xlim([-3, 5])
+        ax2.spines['right'].set_visible(False)
+        ax2.spines['top'].set_visible(False)
+
+    fig.tight_layout()
+
+    return fig
+
+
 def plot_wavelet_summary(df_row, c1=1/(8*np.pi**2), c2=1e-3, nMC=200, nproc=8, detrend='no',
                          gaussianize=False, standardize=True, levels=None,
                          anti_alias=False, period_ticks=None,
@@ -1231,7 +1319,7 @@ def plot_wavelet_summary(df_row, c1=1/(8*np.pi**2), c2=1e-3, nMC=200, nproc=8, d
     ys, ts = Timeseries.clean_ts(ys, ts)
     dt_med = np.median(np.diff(ts))
     ylim_min = dt_med*2
-    tau = np.linspace(np.min(ts), np.max(ts), 501)
+    tau = np.linspace(np.min(ts), np.max(ts), np.min([np.size(ts)//2, 501]))
     #  freqs = np.linspace(1/1000, 1/2, 501)
     freqs = None
 
@@ -1289,12 +1377,11 @@ def plot_wavelet_summary(df_row, c1=1/(8*np.pi**2), c2=1e-3, nMC=200, nproc=8, d
     sns.set(style="ticks", font_scale=1.5)
     ax2 = plt.subplot(gs[1:5, :-3])
 
-    wwa, phase, AR1_q, coi, freqs, tau, Neffs, coeff = \
-        Spectral.wwz(ys, ts, freqs=freqs, tau=tau, c=c1, nMC=nMC, nproc=nproc, detrend=detrend,
-                     gaussianize=gaussianize, standardize=standardize)
+    res_wwz = Spectral.wwz(ys, ts, freqs=freqs, tau=tau, c=c1, nMC=nMC, nproc=nproc, detrend=detrend,
+                           gaussianize=gaussianize, standardize=standardize)
 
-    lt_part = period_ticks[period_ticks <= np.max(coi)]
-    period_ticks = np.concatenate((lt_part, [np.ceil(np.max(coi))]))
+    lt_part = period_ticks[period_ticks <= np.max(res_wwz.coi)]
+    period_ticks = np.concatenate((lt_part, [np.ceil(np.max(res_wwz.coi))]))
 
     period_tickslabel = list(map(str, period_ticks))
     period_tickslabel[0] = ''
@@ -1304,8 +1391,9 @@ def plot_wavelet_summary(df_row, c1=1/(8*np.pi**2), c2=1e-3, nMC=200, nproc=8, d
             label =  label[:-2]
             period_tickslabel[i] = label
 
-    Spectral.plot_wwa(wwa, freqs, tau, coi=coi, AR1_q=AR1_q, yticks=period_ticks, yticks_label=period_tickslabel,
-                      ylim=[np.min(period_ticks), np.max(coi)],
+    Spectral.plot_wwa(res_wwz.wwa, res_wwz.freqs, res_wwz.tau, coi=res_wwz.coi, AR1_q=res_wwz.AR1_q,
+                      yticks=period_ticks, yticks_label=period_tickslabel,
+                      ylim=[np.min(period_ticks), np.max(res_wwz.coi)],
                       plot_cone=True, plot_signif=True, xlabel='Year ({})'.format(df_row['yearUnits']), ylabel='Period (years)',
                       ax=ax2, levels=levels,
                       cbar_orientation='horizontal', cbar_labelsize=15, cbar_pad=0.1, cbar_frac=0.15,
@@ -1316,9 +1404,9 @@ def plot_wavelet_summary(df_row, c1=1/(8*np.pi**2), c2=1e-3, nMC=200, nproc=8, d
     ax3 = plt.subplot(gs[1:4, -3:])
     ax3.spines['right'].set_visible(False)
     ax3.spines['top'].set_visible(False)
-    psd, freqs, psd_ar1_q95, psd_ar1 = Spectral.wwz_psd(ys, ts, freqs=freqs, tau=tau, c=c2, nproc=nproc, nMC=nMC,
-                                                        detrend=detrend, gaussianize=gaussianize, standardize=standardize,
-                                                        anti_alias=anti_alias)
+    res_psd = Spectral.wwz_psd(ys, ts, freqs=None, tau=tau, c=c2, nproc=nproc, nMC=nMC,
+                               detrend=detrend, gaussianize=gaussianize, standardize=standardize,
+                               anti_alias=anti_alias)
 
     #  Spectral.plot_psd(psd, freqs, plot_ar1=True, psd_ar1_q95=psd_ar1_q95,
                       #  #  period_ticks=period_ticks[period_ticks < np.max(coi)],
@@ -1328,17 +1416,17 @@ def plot_wavelet_summary(df_row, c1=1/(8*np.pi**2), c2=1e-3, nMC=200, nproc=8, d
                       #  ar1_lmstyle='--', plot_gridlines=False,
                       #  lmstyle=psd_lmstyle, ax=ax3, period_label='',
                       #  label='Estimated spectrum', psd_label='', vertical=True)
-    ax3.loglog(psd, 1/freqs, '-', label='Estimated spectrum', color=p.colors_dict[df_row['archiveType']])
-    ax3.loglog(psd_ar1_q95, 1/freqs, '--', label='AR(1) 95%', color=sns.xkcd_rgb['pale red'])
+    ax3.loglog(res_psd.psd, 1/res_psd.freqs, '-', label='Estimated spectrum', color=p.colors_dict[df_row['archiveType']])
+    ax3.loglog(res_psd.psd_ar1_q95, 1/res_psd.freqs, '--', label='AR(1) 95%', color=sns.xkcd_rgb['pale red'])
     ax3.set_yticks(period_ticks)
-    ax3.set_ylim([np.min(period_ticks), np.max(coi)])
+    ax3.set_ylim([np.min(period_ticks), np.max(res_wwz.coi)])
 
-    beta_1, f_binned_1, psd_binned_1, Y_reg_1, stderr_1 = Spectral.beta_estimation(psd, freqs, period_I[0], period_I[1])
-    beta_2, f_binned_2, psd_binned_2, Y_reg_2, stderr_2 = Spectral.beta_estimation(psd, freqs, period_D[0], period_D[1])
-    ax3.plot(Y_reg_1, 1/f_binned_1, color='k',
-             label=r'$\beta_I$ = {:.2f}'.format(beta_1) + ', ' + r'$\beta_D$ = {:.2f}'.format(beta_2))
+    res_beta1 = Spectral.beta_estimation(res_psd.psd, res_psd.freqs, period_I[0], period_I[1])
+    res_beta2 = Spectral.beta_estimation(res_psd.psd, res_psd.freqs, period_D[0], period_D[1])
+    ax3.plot(res_beta1.Y_reg, 1/res_beta1.f_binned, color='k',
+             label=r'$\beta_I$ = {:.2f}'.format(res_beta1.beta) + ', ' + r'$\beta_D$ = {:.2f}'.format(res_beta2.beta))
     #  ax3.plot(Y_reg_1, 1/f_binned_1, color='k')
-    ax3.plot(Y_reg_2, 1/f_binned_2, color='k')
+    ax3.plot(res_beta2.Y_reg, 1/res_beta2.f_binned, color='k')
 
     #  if not np.isnan(beta_1):
         #  ax3.annotate(r'$\beta_I$ = {:.2f}'.format(beta_1),
