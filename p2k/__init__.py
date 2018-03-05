@@ -171,6 +171,32 @@ def find_closest_loc(lat, lon, target_lat, target_lon):
         return lat_ind[0], lon_ind[0]
 
 
+def nearest_loc(lats, lons, target_loc):
+    ''' Find the nearest location in paris of lat and lon based on target location
+
+    Args:
+        lats, lons (array): the model latitude and longitude arrays
+        target_loc (tuple): the target location (lat, lon)
+
+    Returns:
+        lat_ind, lon_ind (array): the indices of the found closest model sites
+
+    '''
+
+    # model locations
+    model_locations = []
+
+    for m_lat, m_lon in zip(lats, lons):
+        model_locations.append((m_lat, m_lon))
+
+    # get the closest grid
+    X = target_loc
+    Y = model_locations
+    distance, index = spatial.KDTree(Y).query(X)
+
+    return index
+
+
 def load_CESM_netcdf(path, var_list, decode_times=False):
     ''' Load CESM NetCDF file
 
@@ -826,6 +852,15 @@ def df_append_beta_mtm(df, psds=None, freqs=None, save_path=None, value_name='pa
     return df_new
 
 
+def calc_plot_psd(Xo, to, ntau=501, dcon=1e-3, label='PSD',
+                  period_ticks=[0.5, 1, 2, 5, 10, 20, 50, 100, 200]):
+    tau = np.linspace(np.min(to), np.max(to), ntau)
+    res_psd = Spectral.wwz_psd(Xo, to, freqs=None, tau=tau, c=dcon, standardize=False, nMC=0)
+    fig = Spectral.plot_psd(res_psd.psd, res_psd.freqs, plot_ar1=False, lmstyle='-o',
+                        period_ticks=period_ticks, linewidth=3, ar1_linewidth=3, label=label)
+    return fig, res_psd.psd, res_psd.freqs
+
+
 def plot_psds(psds, freqs, archive_type='glacier ice',
               period_ranges=[(1/200, 1/20), (1/8, 1/2)], period_names=[r'$\beta_D$', r'$\beta_I$'],
               period_ticks=[2, 5, 10, 20, 50, 100, 200, 500], title=None, legend_loc='best', legend_ncol=1,
@@ -1222,6 +1257,7 @@ def plot_beta_hist(df_beta, archives,
 
 
 def plot_psd_betahist(dfs, figsize=None, period_names=['beta_D', 'beta_I'],
+                      ax1_ylim=None,
                       period_ticks=[2, 5, 10, 20, 50, 100, 200, 500]
                       ):
     ''' Plot the PSD as well as the distribution of beta_I and beta_D
@@ -1254,6 +1290,8 @@ def plot_psd_betahist(dfs, figsize=None, period_names=['beta_D', 'beta_I'],
         ax1.set_ylabel('Spectral Density')
         ax1.set_xlabel('Period (years)')
         ax1.set_xticks(period_ticks)
+        if ax1_ylim is not None:
+            ax1.set_ylim(ax1_ylim)
         ax1.get_xaxis().set_major_formatter(ScalarFormatter())
         ax1.xaxis.set_major_formatter(FormatStrFormatter('%g'))
         ax1.set_xlim([np.min(period_ticks), np.max(period_ticks)])
