@@ -2,8 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """The setup script."""
+import sys
+import os
 
 from setuptools import setup, find_packages
+
+if os.path.exists('MANIFEST'):
+    os.remove('MANIFEST')
 
 with open('README.rst') as readme_file:
     readme = readme_file.read()
@@ -32,6 +37,7 @@ setup(
     author_email='fengzhu@usc.edu',
     url='https://github.com/fzhu2e/p2k',
     packages=find_packages(),
+    package_data={'p2k': ['f2py_*.so']},
     include_package_data=True,
     install_requires=requirements,
     license="MIT license",
