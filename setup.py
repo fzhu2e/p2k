@@ -4,6 +4,7 @@
 """The setup script."""
 import sys
 import os
+import re
 
 from setuptools import setup, find_packages
 
@@ -13,29 +14,19 @@ with open('README.rst') as readme_file:
 with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
-requirements = [
-    # TODO: put package requirements here
-]
-
-setup_requirements = [
-    # TODO(fzhu2e): put setup requirements (distutils extensions, etc.) here
-]
-
-test_requirements = [
-    # TODO: put package test requirements here
-]
+meta_file = open("p2k/__init__.py").read()
+metadata = dict(re.findall("__([a-z]+)__\s*=\s*'([^']+)'", meta_file))
 
 setup(
     name='p2k',
-    version='0.3.0',
+    version=metadata['version'],
     description="A package to make life easier with PAGES2k dataset and stuff.",
     long_description=readme + '\n\n' + history,
-    author="Feng Zhu",
-    author_email='fengzhu@usc.edu',
+    author=metadata['author'],
+    author_email=metadata['email'],
     url='https://github.com/fzhu2e/p2k',
     packages=find_packages(),
     include_package_data=True,
-    install_requires=requirements,
     license="MIT license",
     zip_safe=False,
     keywords='p2k',
@@ -49,6 +40,4 @@ setup(
         'Programming Language :: Python :: 3.6',
     ],
     test_suite='tests',
-    tests_require=test_requirements,
-    setup_requires=setup_requirements,
 )

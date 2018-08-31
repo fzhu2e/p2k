@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-__author__ = """Feng Zhu"""
+__author__ = 'Feng Zhu'
 __email__ = 'fengzhu@usc.edu'
-__version__ = '0.1.0'
+__version__ = '0.3.1'
 
 import os
 import lipd as lpd
@@ -796,11 +796,14 @@ def df_append_beta(df, freqs=None, psd_list=None, freqs_list=None, save_path=Non
     for i, period_range in enumerate(period_ranges):
 
         beta_list = []
+        beta_err_list = []
         for j, psd in enumerate(psd_list):
             beta, f_binned, psd_binned, Y_reg, stderr = Spectral.beta_estimation(psd, freqs_list[j], period_range[0], period_range[1])
             beta_list.append(beta)
+            beta_err_list.append(stderr)
 
         df_new[period_names[i]] = beta_list
+        df_new[period_names[i]+'_err'] = beta_err_list
 
     if save_path:
         print('p2k >>> Saving pickle file at: {}'.format(save_path))
@@ -852,13 +855,53 @@ def df_append_beta_mtm(df, psds=None, freqs=None, save_path=None, value_name='pa
     return df_new
 
 
-def calc_plot_psd(Xo, to, ntau=501, dcon=1e-3, label='PSD',
+def calc_plot_psd(Xo, to, ntau=501, dcon=1e-3, label='PSD', anti_alias=True, plot_fig=True, method='Kirchner_f2py', nproc=8,
                   period_ticks=[0.5, 1, 2, 5, 10, 20, 50, 100, 200]):
     tau = np.linspace(np.min(to), np.max(to), ntau)
-    res_psd = Spectral.wwz_psd(Xo, to, freqs=None, tau=tau, c=dcon, standardize=False, nMC=0)
-    fig = Spectral.plot_psd(res_psd.psd, res_psd.freqs, plot_ar1=False, lmstyle='-o',
-                        period_ticks=period_ticks, linewidth=3, ar1_linewidth=3, label=label)
-    return fig, res_psd.psd, res_psd.freqs
+    res_psd = Spectral.wwz_psd(Xo, to, freqs=None, tau=tau, c=dcon, standardize=False, nMC=0,
+                               method=method, anti_alias=anti_alias, nproc=nproc)
+    if plot_fig:
+        fig = Spectral.plot_psd(res_psd.psd, res_psd.freqs, plot_ar1=False, lmstyle='-o',
+                            period_ticks=period_ticks, linewidth=3, ar1_linewidth=3, label=label)
+        return fig, res_psd.psd, res_psd.freqs
+    else:
+        return res_psd.psd, res_psd.freqs
+
+
+def gen_noise(alpha, t, f0=None, m=None):
+    ''' Generate a colored noise timeseries
+
+    Args:
+        alpha (float): exponent of the 1/f^alpha noise
+        t (float): time vector of the generated noise
+        f0 (float): fundamental frequency
+        m (int): maximum number of the waves, which determines the
+            highest frequency of the components in the synthetic noise
+
+    Returns:
+        y (array): the generated 1/f^alpha noise
+
+    References:
+        Eq. (15) in Kirchner, J. W. Aliasing in 1/f(alpha) noise spectra: origins, consequences, and remedies.
+            Phys Rev E Stat Nonlin Soft Matter Phys 71, 066110 (2005).
+    '''
+    n = np.size(t)  # number of time points
+    y = np.zeros(n)
+
+    if f0 is None:
+        f0 = 1/n  # fundamental frequency
+    if m is None:
+        m = n
+
+    k = np.arange(m) + 1  # wave numbers
+
+    theta = np.random.rand(int(m))*2*np.pi  # random phase
+    for j in range(n):
+        coeff = (k*f0)**(-alpha/2)
+        sin_func = np.sin(2*np.pi*k*f0*t[j] + theta)
+        y[j] = np.sum(coeff*sin_func)
+
+    return y
 
 
 def plot_psds(psds, freqs, archive_type='glacier ice',
@@ -1258,6 +1301,7 @@ def plot_beta_hist(df_beta, archives,
 
 def plot_psd_betahist(dfs, figsize=None, period_names=['beta_D', 'beta_I'],
                       ax1_ylim=None,
+                      lgd_loc='upper right', lgd_anchor=(1.4, 1),
                       period_ticks=[2, 5, 10, 20, 50, 100, 200, 500]
                       ):
     ''' Plot the PSD as well as the distribution of beta_I and beta_D
@@ -1315,7 +1359,7 @@ def plot_psd_betahist(dfs, figsize=None, period_names=['beta_D', 'beta_I'],
         g2 = sns.kdeplot(beta_I, shade=False, color=p.colors_dict[archive_type], linestyle='--', ax=ax2,
                          label=r'$\{}$ = {:.2f} ({} records)'.format(beta_I_str,  med_I, n_I))
         g2.axvline(x=med_I, ymin=0, ymax=0.1, linewidth=1, color=p.colors_dict[archive_type], linestyle='--')
-        ax2.legend(fontsize=18, bbox_to_anchor=(1.4, 1), loc='upper right', ncol=1)
+        ax2.legend(fontsize=18, bbox_to_anchor=lgd_anchor, loc=lgd_loc, ncol=1)
         ax2.set_xlim([-3, 5])
         ax2.spines['right'].set_visible(False)
         ax2.spines['top'].set_visible(False)
