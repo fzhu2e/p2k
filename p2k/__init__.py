@@ -77,8 +77,8 @@ def lipd2pkl(lipd_file_dir, pkl_file_path):
         df (Pandas DataFrame): the converted Pandas DataFrame
 
     '''
-    lipd_file_dir = os.path.abspath(lipd_file_dir)
-    pkl_file_path = os.path.abspath(pkl_file_path)
+    lipd_file_dir = os.path.expanduser(lipd_file_dir)
+    pkl_file_path = os.path.expanduser(pkl_file_path)
 
     lipds = lpd.readLipd(lipd_file_dir)
     ts_list = lpd.extractTs(lipds)
@@ -98,7 +98,10 @@ def lipd2pkl(lipd_file_dir, pkl_file_path):
         if 'paleoData_useInGlobalTemperatureAnalysis' in ts.keys() and ts['paleoData_useInGlobalTemperatureAnalysis'] == 'TRUE':
 
             for name in col_str:
-                df_tmp.loc[i, name] = ts[name]
+                try:
+                    df_tmp.loc[i, name] = ts[name]
+                except:
+                    df_tmp.loc[i, name] = np.nan
 
             i += 1
 
@@ -369,7 +372,7 @@ def df2psd(df, freqs=None, value_name='paleoData_values', time_name='year', save
         if np.mean(np.diff(to)) < 1:
             warnings.warn('The time series will be annualized due to mean of dt less than one year.')
             Xo, to = annualize_ts(Xo, to)
-        tau = np.linspace(np.min(to), np.max(to), np.min([np.size(to)//2, 501]))
+        tau = np.linspace(np.min(to), np.max(to), np.min([np.size(to), 501]))
         res_wwz = Spectral.wwz_psd(Xo, to, freqs=freqs, tau=tau, c=1e-3, nproc=16, nMC=0,
                                    standardize=standardize, gaussianize=gaussianize)
         psd_list.append(res_wwz.psd)
