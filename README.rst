@@ -16,5 +16,11 @@ Features
 * Load CESM NetCDF file
 * Annualize CESM data
 * Find the CESM grid at the cloest location based on given lat/lon
-* Proxy System Modeling - Icecore
+* Proxy System Modeling (PSM)
 * Plottings: beta map, beta distribution for each archive, psd ensemble plot
+
+Included PSMs
+--------
+
+* Ice-core
+* [VSLite](https://github.com/suztolwinskiward/VSLiteR)
