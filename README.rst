@@ -22,5 +22,9 @@ Features
 Included PSMs
 --------
 
-* Ice-core
-* [VSLite](https://github.com/suztolwinskiward/VSLiteR)
+* Ice-core d18O
+* Tree-ring width with [VSLite](https://github.com/suztolwinskiward/VSLiteR)
+* Tree-ring cellulose
+* Coral d18O
+* Speleothem
+* Varve thickness

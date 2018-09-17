@@ -858,13 +858,16 @@ def df_append_beta_mtm(df, psds=None, freqs=None, save_path=None, value_name='pa
     return df_new
 
 
-def calc_plot_psd(Xo, to, ntau=501, dcon=1e-3, label='PSD', anti_alias=True, plot_fig=True, method='Kirchner_f2py', nproc=8,
-                  period_ticks=[0.5, 1, 2, 5, 10, 20, 50, 100, 200]):
+def calc_plot_psd(Xo, to, ntau=501, dcon=1e-3, label='PSD', standardize=False, anti_alias=True, plot_fig=True, method='Kirchner_f2py', nproc=8,
+                  period_ticks=[0.5, 1, 2, 5, 10, 20, 50, 100, 200], color=None):
+    if color is None:
+        color = sns.xkcd_rgb['denim blue']
+
     tau = np.linspace(np.min(to), np.max(to), ntau)
-    res_psd = Spectral.wwz_psd(Xo, to, freqs=None, tau=tau, c=dcon, standardize=False, nMC=0,
+    res_psd = Spectral.wwz_psd(Xo, to, freqs=None, tau=tau, c=dcon, standardize=standardize, nMC=0,
                                method=method, anti_alias=anti_alias, nproc=nproc)
     if plot_fig:
-        fig = Spectral.plot_psd(res_psd.psd, res_psd.freqs, plot_ar1=False, lmstyle='-o',
+        fig = Spectral.plot_psd(res_psd.psd, res_psd.freqs, plot_ar1=False, lmstyle='-o', color=color,
                             period_ticks=period_ticks, linewidth=3, ar1_linewidth=3, label=label)
         return fig, res_psd.psd, res_psd.freqs
     else:

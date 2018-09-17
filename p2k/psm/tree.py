@@ -2,18 +2,16 @@
 '''
 
 import numpy as np
-import p2k
-
 # rpy2
 from rpy2.robjects.packages import importr
 import rpy2.robjects.numpy2ri
-
+import rpy2.robjects as ro
 rpy2.robjects.numpy2ri.activate()
-VSLiteR = importr('VSLiteR')
-
 
 def vslite(syear, eyear, phi, T, P, T1=8, T2=23, M1=0.01, M2=0.05, Mmax=0.76, Mmin=0.01,
-    alph=0.093, m_th=4.886, mu_th=5.8, rootd=1000, M0=0.2, substep=0, I_0=1, I_f=12, hydroclim="P"):
+    alph=0.093, m_th=4.886, mu_th=5.8, rootd=1000, M0=0.2, substep=0, I_0=1, I_f=12, hydroclim="P",
+    Rlib_path='/Library/Frameworks/R.framework/Versions/3.4/Resources/library'):
+
     ''' VS-Lite tree-ring PSM
 
     Porting the VSLiteR code (https://github.com/fzhu2e/VSLiteR),
@@ -55,7 +53,7 @@ def vslite(syear, eyear, phi, T, P, T1=8, T2=23, M1=0.01, M2=0.05, Mmax=0.76, Mm
             gT, gM, gE, M, potEv, sample.mean.width, sample.std.width
 
     Reference:
-        + VSLiteR code (https://github.com/suztolwinskiward/VSLiteR)
+        + The original VSLiteR code by Suz Tolwinski-Ward (https://github.com/suztolwinskiward/VSLiteR)
         + Tolwinski-Ward, S.E., M.N. Evans, M.K. Hughes, K.J. Anchukaitis, An efficient forward model of the climate controls
             on interannual variation in tree-ring width, Climate Dynamics, doi:10.1007/s00382-010-0945-5, (2011).
         + Tolwinski-Ward, S.E., K.J. Anchukaitis, M.N. Evans, Bayesian parameter estimation and interpretation for an
@@ -63,6 +61,8 @@ def vslite(syear, eyear, phi, T, P, T1=8, T2=23, M1=0.01, M2=0.05, Mmax=0.76, Mm
         + Tolwinski-Ward, S.E., M.P. Tingley, M.N. Evans, M.K. Hughes, D.W. Nychka, Probabilistic reconstructions of localtemperature and
             soil moisture from tree-ring data with potentially time-varying climatic response, Climate Dynamics, doi:10.1007/s00382-014-2139-z, (2014).
     '''
+    ro.r('.libPaths("{}")'.format(Rlib_path))
+    VSLiteR = importr('VSLiteR')
     nyr = eyear - syear + 1
     T_model = T.reshape((nyr, 12)).T - 273.15  # in monthly temperatures (degC)
     P_model = P.reshape((nyr, 12)).T * 3600*24*30  # in accumulated monthly precipitation (mm)
