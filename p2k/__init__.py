@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 __author__ = 'Feng Zhu'
 __email__ = 'fengzhu@usc.edu'
-__version__ = '0.3.3'
+__version__ = '0.3.4'
 
 import os
 import lipd as lpd
@@ -118,23 +118,32 @@ def lipd2pkl(lipd_file_dir, pkl_file_path):
     return df
 
 
-def find_closest_loc(lat, lon, target_lat, target_lon):
+def find_closest_loc(lat, lon, target_lat, target_lon, mode='latlon'):
     ''' Find the closet model sites (lat, lon) based on the given target (lat, lon) list
 
     Args:
         lat, lon (array): the model latitude and longitude arrays
         target_lat, target_lon (array): the target latitude and longitude arrays
+        mode (str):
+        + latlon: the model lat/lon is a 1-D array
+        + mesh: the model lat/lon is a 2-D array
 
     Returns:
         lat_ind, lon_ind (array): the indices of the found closest model sites
 
     '''
 
-    # model locations
-    mesh = np.meshgrid(lat, lon)
+    if mode is 'latlon':
+        # model locations
+        mesh = np.meshgrid(lat, lon)
 
-    list_of_grids = list(zip(*(grid.flat for grid in mesh)))
-    model_lat, model_lon = zip(*list_of_grids)
+        list_of_grids = list(zip(*(grid.flat for grid in mesh)))
+        model_lat, model_lon = zip(*list_of_grids)
+
+    elif mode is 'mesh':
+        model_lat = lat.flatten()
+        model_lon = lon.flatten()
+
     model_locations = []
 
     for m_lat, m_lon in zip(model_lat, model_lon):
@@ -162,8 +171,14 @@ def find_closest_loc(lat, lon, target_lat, target_lon):
         Y = model_locations
         distance, index = spatial.KDTree(Y).query(X)
         closest = Y[index]
-        lat_ind[i] = list(lat).index(closest[0])
-        lon_ind[i] = list(lon).index(closest[1])
+        if mode is 'latlon':
+            lat_ind[i] = list(lat).index(closest[0])
+            lon_ind[i] = list(lon).index(closest[1])
+        elif mode is 'mesh':
+            nlon = np.shape(lat)[-1]
+            lat_ind[i] = index // nlon
+            lon_ind[i] = index % nlon
+
         #  if np.size(target_lat) > 1:
             #  df_ind[i] = target_locations_dup.index(target_loc)
 
