@@ -9,6 +9,7 @@ import numpy as np
 import scipy.integrate as si
 from scipy.special import erf
 from scipy.signal import butter, lfilter, filtfilt
+import p2k
 
 
 def butter_lowpass(cutoff, fs, order=3):
@@ -44,15 +45,18 @@ def adv_disp_transit(tau,tau0,Pe):
     return h
 
 
-def speleo_sensor(dt, d18O, T, model='Adv-Disp', tau0=0.5, Pe=1.0):
+def speleo_sensor(year, d18Op, tas, pr, model='Adv-Disp', tau0=0.5, Pe=1.0):
     '''
     Speleothem Calcite [Sensor] Model
     Converts environmental signals to d18O calcite/dripwater using
     various models of karst aquifer recharge and calcification.
     INPUTS:
-        dt        time step [years]                         (int or float, 1=1 year, 1./12. for months. etc.)
-        T        Average Annual Temperature     [K]         (numpy array, length n)
-        d18O    delta-18-O (precip or soil water) [permil]  (numpy array, length n)
+        year (1d array: time): time axis [year in float]
+        d18Op (1d array: time): d18O of precipitation [permil]
+        pr (2d array: location, time): precipitation rate [kg m-2 s-1]
+        # dt        time step [years]                         (int or float, 1=1 year, 1./12. for months. etc.)
+        # T        Average Annual Temperature     [K]         (numpy array, length n)
+        # d18O    delta-18-O (precip or soil water) [permil]  (numpy array, length n)
         NB: make sure these are precipitation weighted
     MODEL PARAMETERS
     ================
@@ -74,6 +78,11 @@ def speleo_sensor(dt, d18O, T, model='Adv-Disp', tau0=0.5, Pe=1.0):
     #======================================================================
     # ensure that tau0 is scaled correctly
     # (n.b. if in units of months, scale to years, *1/12)
+    d18O, year_int = p2k.annualize(d18Op, year, weights=pr)
+
+    dt = np.mean(np.diff(year))
+
+    T, year_int = p2k.annualize(tas, year)
 
     tau0=tau0*dt
 

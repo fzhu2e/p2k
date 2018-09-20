@@ -135,10 +135,10 @@ def find_closest_loc(lat, lon, target_lat, target_lon, mode='latlon'):
 
     if mode is 'latlon':
         # model locations
-        mesh = np.meshgrid(lat, lon)
+        mesh = np.meshgrid(lon, lat)
 
         list_of_grids = list(zip(*(grid.flat for grid in mesh)))
-        model_lat, model_lon = zip(*list_of_grids)
+        model_lon, model_lat = zip(*list_of_grids)
 
     elif mode is 'mesh':
         model_lat = lat.flatten()
@@ -162,22 +162,16 @@ def find_closest_loc(lat, lon, target_lat, target_lon, mode='latlon'):
     lat_ind = np.zeros(n_loc, dtype=int)
     lon_ind = np.zeros(n_loc, dtype=int)
 
-    if np.size(target_lat) > 1:
-        df_ind = np.zeros(n_loc, dtype=int)
-
     # get the closest grid
     for i, target_loc in enumerate(target_locations):
         X = target_loc
         Y = model_locations
         distance, index = spatial.KDTree(Y).query(X)
         closest = Y[index]
-        if mode is 'latlon':
-            lat_ind[i] = list(lat).index(closest[0])
-            lon_ind[i] = list(lon).index(closest[1])
-        elif mode is 'mesh':
-            nlon = np.shape(lat)[-1]
-            lat_ind[i] = index // nlon
-            lon_ind[i] = index % nlon
+        nlon = np.shape(lon)[-1]
+
+        lat_ind[i] = index // nlon
+        lon_ind[i] = index % nlon
 
         #  if np.size(target_lat) > 1:
             #  df_ind[i] = target_locations_dup.index(target_loc)
