@@ -11,9 +11,6 @@ from setuptools import setup, find_packages
 with open('README.md') as readme_file:
     readme = readme_file.read()
 
-with open('HISTORY.rst') as history_file:
-    history = history_file.read()
-
 meta_file = open("p2k/__init__.py").read()
 metadata = dict(re.findall("__([a-z]+)__\s*=\s*'([^']+)'", meta_file))
 
@@ -21,7 +18,7 @@ setup(
     name='p2k',
     version=metadata['version'],
     description="A package to make life easier with PAGES2k dataset and stuff.",
-    long_description=readme + '\n\n' + history,
+    long_description=readme,
     author=metadata['author'],
     author_email=metadata['email'],
     url='https://github.com/fzhu2e/p2k',

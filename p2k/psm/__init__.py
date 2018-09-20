@@ -8,7 +8,9 @@ import numpy as np
 
 
 def forward(proxy, lat_obs, lon_obs, lat_model, lon_model, time_model,
-    tas=None, pr=None, psl=None, d18Opr=None, d18Ocoral=None, nproc=8, **vslite_params):
+    tas=None, pr=None, psl=None, d18Opr=None, d18Ocoral=None, nproc=8,
+    Rlib_path='/Library/Frameworks/R.framework/Versions/3.4/Resources/library',
+    T1=8, T2=23, M1=0.01, M2=0.05):
 
     ''' Forward environmental variables to proxy variables
 
@@ -75,7 +77,8 @@ def forward(proxy, lat_obs, lon_obs, lat_model, lon_model, time_model,
         phi = lat_obs
 
         pseudo_value = p2k.psm.tree.vslite(
-            syear, eyear, phi, tas[:, lat_ind, lon_ind], pr[:, lat_ind, lon_ind], **vslite_params)
+            syear, eyear, phi, tas[:, lat_ind, lon_ind], pr[:, lat_ind, lon_ind],
+            Rlib_path=Rlib_path, T1=T1, T2=T2, M1=M1, M2=M2)
         pseudo_time = np.linspace(syear, eyear, nyr)
 
     else:
