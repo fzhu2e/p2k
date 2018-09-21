@@ -9,6 +9,7 @@ import numpy as np
 
 def forward(proxy, lat_obs, lon_obs, lat_model, lon_model, time_model,
     tas=None, pr=None, psl=None, d18Opr=None, d18Ocoral=None, nproc=8,
+    annualize_coral=True,
     Rlib_path='/Library/Frameworks/R.framework/Versions/3.4/Resources/library',
     T1=8, T2=23, M1=0.01, M2=0.05):
 
@@ -41,13 +42,19 @@ def forward(proxy, lat_obs, lon_obs, lat_model, lon_model, time_model,
             lat_obs, lon_obs, lat_model[lat_ind, lon_ind], lon_model[lat_ind, lon_ind]))
     
         pseudo_value = np.asarray(d18Ocoral[:, lat_ind, lon_ind])
-        pseudo_value[pseudo_value>1e5] = np.nan
+        pseudo_value[pseudo_value>1e5] = np.nan  # replace missing values with nan
         while np.all(np.isnan(pseudo_value)):
             for lat_fix in [0, -1, 1, -2, 2, -3, 3]:
                 for lon_fix in [0, -1, 1, -2, 2, -3, 3]:
                     pseudo_value = np.asarray(d18Ocoral[:, lat_ind+lat_fix, lon_ind+lon_fix])
 
-        pseudo_time = time_model
+        pseudo_value[pseudo_value>1e5] = np.nan  # replace missing values with nan
+
+        if annualize_coral:
+            pseudo_value, pseudo_time = p2k.annualize_ts(pseudo_value, time_model)
+        else:
+            pseudo_time = time_model
+
 
     elif proxy == 'ice_d18O':
         print('p2k >>> forward to {} ...'.format(proxy))
