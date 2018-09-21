@@ -209,6 +209,45 @@ def nearest_loc(lats, lons, target_loc):
     return index
 
 
+def load_netCDF4(path, var_list):
+    var_fields = []
+    ncfile = netCDF4.Dataset(path, 'r')
+
+    for var in var_list:
+
+        if var is 'year':
+            time = ncfile.variables['time']
+            time_convert = netCDF4.num2date(time[:], time.units, time.calendar)
+
+            def datetime2year(dt):
+                dt = datetime(year=dt.year, month=dt.month, day=dt.day)
+                year_part = dt - datetime(year=dt.year, month=1, day=1)
+                year_length = datetime(year=dt.year+1, month=1, day=1) - datetime(year=dt.year, month=1, day=1)
+                return dt.year + year_part/year_length
+
+            nt = np.shape(time_convert)[0]
+            year = np.zeros(nt)
+            for i, day in enumerate(time_convert):
+                year[i] = datetime2year(day)
+
+            var_fields.append(year)
+
+        else:
+            if var is 'lon':
+                field = np.asarray(ncfile.variables[var]) - 180  # make the longitude consistent with PAGES2k
+            elif var is 'lat':
+                field = np.asarray(ncfile.variables[var])
+            else:
+                field = ncfile.variables[var]
+
+            var_fields.append(field)
+
+    if len(var_list) == 1:
+        var_fields = var_fields[0]
+
+    return var_fields
+
+
 def load_CESM_netcdf(path, var_list, decode_times=False):
     ''' Load CESM NetCDF file
 

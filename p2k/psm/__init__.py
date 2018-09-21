@@ -33,41 +33,56 @@ def forward(proxy, lat_obs, lon_obs, lat_model, lon_model, time_model,
     '''
     if proxy == 'coral_d18O':
         print('p2k >>> forward to {} ...'.format(proxy))
+        if d18Ocoral is None:
+            raise TypeError
+
         lat_ind, lon_ind = p2k.find_closest_loc(lat_model, lon_model, lat_obs, lon_obs, mode='mesh')
         print('p2k >>> Target: ({}, {}) >>> Found: ({}, {})'.format(
             lat_obs, lon_obs, lat_model[lat_ind, lon_ind], lon_model[lat_ind, lon_ind]))
     
-        pseudo_value = d18Ocoral[:, lat_ind, lon_ind]
+        pseudo_value = np.asarray(d18Ocoral[:, lat_ind, lon_ind])
         pseudo_value[pseudo_value>1e5] = np.nan
+        while np.all(np.isnan(pseudo_value)):
+            for lat_fix in [0, -1, 1, -2, 2, -3, 3]:
+                for lon_fix in [0, -1, 1, -2, 2, -3, 3]:
+                    pseudo_value = np.asarray(d18Ocoral[:, lat_ind+lat_fix, lon_ind+lon_fix])
+
         pseudo_time = time_model
 
     elif proxy == 'ice_d18O':
         print('p2k >>> forward to {} ...'.format(proxy))
+        if tas is None or pr is None or psl is None or d18Opr is None:
+            raise TypeError
+
         lat_ind, lon_ind = p2k.find_closest_loc(lat_model, lon_model, lat_obs, lon_obs, mode='latlon')
         print('p2k >>> Target: ({}, {}) >>> Found: ({}, {})'.format(
             lat_obs, lon_obs, lat_model[lat_ind], lon_model[lon_ind]))
 
+        tas_sub = np.asarray(tas[:, lat_ind, lon_ind])
+        pr_sub = np.asarray(pr[:, lat_ind, lon_ind])
+        psl_sub = np.asarray(psl[:, lat_ind, lon_ind])
+        d18Opr_sub = np.asarray(d18Opr[:, lat_ind, lon_ind])
+
         # annualize the data
-        tas_ann, year_int = p2k.annualize(tas, time_model)
-        psl_ann, year_int = p2k.annualize(psl, time_model)
-        d18O_ann, year_int = p2k.annualize(d18Opr, time_model)
-        pr_ann, year_int = p2k.annualize(pr, time_model)
+        tas_ann, year_int = p2k.annualize(tas_sub, time_model)
+        psl_ann, year_int = p2k.annualize(psl_sub, time_model)
+        pr_ann, year_int = p2k.annualize(pr_sub, time_model)
 
         nyr = len(year_int)
 
         # sensor model
         d18O_ice = p2k.psm.icecore.ice_sensor(time_model, d18Opr, pr)
-        d18O_ice = d18O_ice[:, lat_ind, lon_ind]
         # diffuse model
-        ice_diffused = p2k.psm.icecore.ice_archive(d18O_ice,
-            pr_ann[:, lat_ind, lon_ind], tas_ann[:, lat_ind, lon_ind],
-            psl_ann[:, lat_ind, lon_ind], nproc=nproc)
+        ice_diffused = p2k.psm.icecore.ice_archive(d18O_ice[:, lat_ind, lon_ind], pr_ann, tas_ann, psl_ann, nproc=nproc)
 
         pseudo_value = ice_diffused[::-1]
         pseudo_time = year_int
 
     elif proxy == 'tree_trw':
         print('p2k >>> forward to {} ...'.format(proxy))
+        if tas is None or pr is None:
+            raise TypeError
+
         lat_ind, lon_ind = p2k.find_closest_loc(lat_model, lon_model, lat_obs, lon_obs, mode='latlon')
         print('p2k >>> Target: ({}, {}) >>> Found: ({}, {})'.format(
             lat_obs, lon_obs, lat_model[lat_ind], lon_model[lon_ind]))
@@ -76,13 +91,19 @@ def forward(proxy, lat_obs, lon_obs, lat_model, lon_model, time_model,
         nyr = eyear - syear + 1
         phi = lat_obs
 
+        tas_sub = np.asarray(tas[:, lat_ind, lon_ind])
+        pr_sub = np.asarray(pr[:, lat_ind, lon_ind])
+
         pseudo_value = p2k.psm.tree.vslite(
-            syear, eyear, phi, tas[:, lat_ind, lon_ind], pr[:, lat_ind, lon_ind],
+            syear, eyear, phi, tas_sub, pr_sub,
             Rlib_path=Rlib_path, T1=T1, T2=T2, M1=M1, M2=M2)
         pseudo_time = np.linspace(syear, eyear, nyr)
 
     else:
         print('p2k >>> ERROR: Proxy type not supported!')
-        pseudo_value, pseudo_time =  None, None
+        raise ValueError
+
+    if np.all(np.isnan(pseudo_value)):
+        pseudo_value, pseudo_time = None, None
 
     return pseudo_value, pseudo_time
