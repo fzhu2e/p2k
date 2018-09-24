@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 __author__ = 'Feng Zhu'
 __email__ = 'fengzhu@usc.edu'
-__version__ = '0.3.7'
+__version__ = '0.3.8'
 
 import os
 import lipd as lpd
@@ -907,7 +907,7 @@ def df_append_beta_mtm(df, psds=None, freqs=None, save_path=None, value_name='pa
     return df_new
 
 
-def calc_plot_psd(Xo, to, ntau=501, dcon=1e-3, label='PSD', standardize=False, anti_alias=True, plot_fig=True, method='Kirchner_f2py', nproc=8,
+def calc_plot_psd(Xo, to, ntau=501, dcon=1e-3, label='PSD', standardize=False, anti_alias=False, plot_fig=True, method='Kirchner_f2py', nproc=8,
                   period_ticks=[0.5, 1, 2, 5, 10, 20, 50, 100, 200], color=None):
     if color is None:
         color = sns.xkcd_rgb['denim blue']

@@ -9,6 +9,7 @@ import rpy2.robjects as ro
 rpy2.robjects.numpy2ri.activate()
 
 def vslite(syear, eyear, phi, T, P, T1=8, T2=23, M1=0.01, M2=0.05, Mmax=0.76, Mmin=0.01,
+    normalize=True,
     alph=0.093, m_th=4.886, mu_th=5.8, rootd=1000, M0=0.2, substep=0, I_0=1, I_f=12, hydroclim="P",
     Rlib_path='/Library/Frameworks/R.framework/Versions/3.4/Resources/library'):
 
@@ -72,7 +73,11 @@ def vslite(syear, eyear, phi, T, P, T1=8, T2=23, M1=0.01, M2=0.05, Mmax=0.76, Mm
                          I_0=I_0, I_f=I_f, hydroclim=hydroclim)
 
     res = dict(zip(res.names, map(list, list(res))))
-    trw = np.asarray(res['trw_org'])
+
+    if normalize:
+        trw = np.asarray(res['trw'])
+    else:
+        trw = np.asarray(res['trw_org'])
 
     return trw
 
