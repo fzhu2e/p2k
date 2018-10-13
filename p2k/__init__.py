@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 __author__ = 'Feng Zhu'
 __email__ = 'fengzhu@usc.edu'
-__version__ = '0.3.8'
+__version__ = '0.3.9'
 
 import os
 import lipd as lpd
@@ -66,12 +66,20 @@ class PAGES2k(object):
     colors_dict = dict(zip(archive_types, colors))
 
 
-def lipd2pkl(lipd_file_dir, pkl_file_path):
+def lipd2pkl(lipd_file_dir, pkl_file_path, col_str=[
+            'dataSetName', 'archiveType',
+            'geo_meanElev', 'geo_meanLat', 'geo_meanLon',
+            'year', 'yearUnits',
+            'paleoData_variableName',
+            'paleoData_units',
+            'paleoData_values',
+            'paleoData_proxy']):
     ''' Convert a bunch of PAGES2k LiPD files to a pickle file of Pandas DataFrame to boost data loading
 
     Args:
         lipd_file_dir (str): the path of the PAGES2k LiPD files
         pkl_file_path (str): the path of the converted pickle file
+        col_str (list of str): the name string of the variables to extract from the LiPD files
 
     Returns:
         df (Pandas DataFrame): the converted Pandas DataFrame
@@ -82,14 +90,6 @@ def lipd2pkl(lipd_file_dir, pkl_file_path):
 
     lipds = lpd.readLipd(lipd_file_dir)
     ts_list = lpd.extractTs(lipds)
-
-    col_str = ['dataSetName', 'archiveType',
-               'geo_meanElev', 'geo_meanLat', 'geo_meanLon',
-               'year', 'yearUnits',
-               'paleoData_variableName',
-               'paleoData_units',
-               'paleoData_values',
-               'paleoData_proxy']
 
     df_tmp = pd.DataFrame(index=range(len(ts_list)), columns=col_str)
 
