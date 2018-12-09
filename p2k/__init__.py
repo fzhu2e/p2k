@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 __author__ = 'Feng Zhu'
 __email__ = 'fengzhu@usc.edu'
-__version__ = '0.3.9'
+__version__ = '0.4.0'
 
 import os
 import lipd as lpd
@@ -347,9 +347,17 @@ def annualize_ts(ys, ts):
     for i in range(n_year):
         t_start = year_int_pad[i]
         t_end = year_int_pad[i+1]
-        t_range = (ts >= t_start) & (ts < t_end)
+        #  t_range = (ts >= t_start) & (ts < t_end)
+        t_range = (ts > t_start) & (ts <= t_end)
         value_between = ys[t_range]
-        ys_ann[i] = np.average(value_between[~np.isnan(value_between)], axis=0)
+        if np.size(value_between) == 0:
+            ys_ann[i] = np.nan
+        else:
+            ys_ann[i] = np.average(value_between[~np.isnan(value_between)], axis=0)
+
+    ys_tmp = np.copy(ys_ann)
+    ys_ann = ys_ann[~np.isnan(ys_tmp)]
+    year_int = year_int[~np.isnan(ys_tmp)]
 
     return ys_ann, year_int
 
