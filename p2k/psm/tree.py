@@ -9,7 +9,7 @@ import rpy2.robjects as ro
 rpy2.robjects.numpy2ri.activate()
 
 def vslite(syear, eyear, phi, T, P, T1=8, T2=23, M1=0.01, M2=0.05, Mmax=0.76, Mmin=0.01,
-    normalize=True,
+    normalize=True, return_details=False,
     alph=0.093, m_th=4.886, mu_th=5.8, rootd=1000, M0=0.2, substep=0, I_0=1, I_f=12, hydroclim="P",
     Rlib_path='/Library/Frameworks/R.framework/Versions/3.4/Resources/library'):
 
@@ -79,7 +79,10 @@ def vslite(syear, eyear, phi, T, P, T1=8, T2=23, M1=0.01, M2=0.05, Mmax=0.76, Mm
     else:
         trw = np.asarray(res['trw_org'])
 
-    return trw
+    if return_details:
+        return res
+    else:
+        return trw
 
 
 def cellulose_sensor(t, T, P, RH, d18Os, d18Op, d18Ov, flag=1.0, iso=True):
