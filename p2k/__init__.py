@@ -67,6 +67,7 @@ class PAGES2k(object):
 
 
 def lipd2pkl(lipd_file_dir, pkl_file_path, col_str=[
+            'paleoData_pages2kID',
             'dataSetName', 'archiveType',
             'geo_meanElev', 'geo_meanLat', 'geo_meanLon',
             'year', 'yearUnits',
@@ -85,8 +86,8 @@ def lipd2pkl(lipd_file_dir, pkl_file_path, col_str=[
         df (Pandas DataFrame): the converted Pandas DataFrame
 
     '''
-    lipd_file_dir = os.path.expanduser(lipd_file_dir)
-    pkl_file_path = os.path.expanduser(pkl_file_path)
+    lipd_file_dir = os.path.realpath(lipd_file_dir)
+    pkl_file_path = os.path.realpath(pkl_file_path)
 
     lipds = lpd.readLipd(lipd_file_dir)
     ts_list = lpd.extractTs(lipds)
