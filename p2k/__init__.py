@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 __author__ = 'Feng Zhu'
 __email__ = 'fengzhu@usc.edu'
-__version__ = '0.4.0'
+__version__ = '0.4.1'
 
 import os
-import lipd as lpd
+import lipd
 import pandas as pd
 import numpy as np
 from scipy import spatial
@@ -34,23 +34,23 @@ from pyleoclim import Spectral, Timeseries
 
 from . import psm
 
+
 class PAGES2k(object):
     ''' A bunch of PAGES2k style settings
     '''
     archive_types = ['bivalve',
-                    'borehole',
-                    'coral',
-                    'documents',
-                    'glacier ice',
-                    'hybrid',
-                    'lake sediment',
-                    'marine sediment',
-                    'sclerosponge',
-                    'speleothem',
-                    'tree',
-                    ]
+                     'borehole',
+                     'coral',
+                     'documents',
+                     'glacier ice',
+                     'hybrid',
+                     'lake sediment',
+                     'marine sediment',
+                     'sclerosponge',
+                     'speleothem',
+                     'tree',
+                     ]
     markers = ['p', 'p', 'o', 'v', 'd', '*', 's', 's', '8', 'D', '^']
-    #  markers = ['D', 'v', 'o', '+', 'd', '*', 's', 's', '>', 'x', '^']
     markers_dict = dict(zip(archive_types, markers))
     colors = [np.array([ 1.        ,  0.83984375,  0.        ]),
               np.array([ 0.73828125,  0.71484375,  0.41796875]),
@@ -66,7 +66,7 @@ class PAGES2k(object):
     colors_dict = dict(zip(archive_types, colors))
 
 
-def lipd2pkl(lipd_file_dir, pkl_file_path, col_str=[
+def lipd2df(lipd_dirpath, pkl_filepath, col_str=[
             'paleoData_pages2kID',
             'dataSetName', 'archiveType',
             'geo_meanElev', 'geo_meanLat', 'geo_meanLon',
@@ -75,46 +75,56 @@ def lipd2pkl(lipd_file_dir, pkl_file_path, col_str=[
             'paleoData_units',
             'paleoData_values',
             'paleoData_proxy']):
+
     ''' Convert a bunch of PAGES2k LiPD files to a pickle file of Pandas DataFrame to boost data loading
 
     Args:
-        lipd_file_dir (str): the path of the PAGES2k LiPD files
-        pkl_file_path (str): the path of the converted pickle file
+        lipd_dirpath (str): the path of the PAGES2k LiPD files
+        pkl_filepath (str): the path of the converted pickle file
         col_str (list of str): the name string of the variables to extract from the LiPD files
 
     Returns:
         df (Pandas DataFrame): the converted Pandas DataFrame
-
     '''
-    lipd_file_dir = os.path.realpath(lipd_file_dir)
-    pkl_file_path = os.path.realpath(pkl_file_path)
 
-    lipds = lpd.readLipd(lipd_file_dir)
-    ts_list = lpd.extractTs(lipds)
+    # save the current working directory for later use, as the LiPD utility will change it in the background
+    work_dir = os.getcwd()
 
+    # LiPD utility requries the absolute path, so let's get it
+    lipd_dirpath = os.path.abspath(lipd_dirpath)
+
+    # load LiPD files from the given directory
+    lipds = lipd.readLipd(lipd_dirpath)
+
+    # extract timeseries from the list of LiDP objects
+    ts_list = lipd.extractTs(lipds)
+
+    # recover the working directory
+    os.chdir(work_dir)
+
+    # create an empty pandas dataframe with the number of rows to be the number of the timeseries (PAGES2k records),
+    # and the columns to be the variables we'd like to extract
     df_tmp = pd.DataFrame(index=range(len(ts_list)), columns=col_str)
 
+    # loop over the timeseries and pick those for global temperature analysis
     i = 0
     for ts in ts_list:
-        if 'paleoData_useInGlobalTemperatureAnalysis' in ts.keys() and ts['paleoData_useInGlobalTemperatureAnalysis'] == 'TRUE':
-
+        if 'paleoData_useInGlobalTemperatureAnalysis' in ts.keys() and \
+            ts['paleoData_useInGlobalTemperatureAnalysis'] == 'TRUE':
             for name in col_str:
                 try:
                     df_tmp.loc[i, name] = ts[name]
                 except:
                     df_tmp.loc[i, name] = np.nan
-
             i += 1
 
+    # drop the rows with all NaNs (those not for global temperature analysis)
     df = df_tmp.dropna(how='all')
 
-    print('p2k >>> Saving pickle file at: {}'.format(pkl_file_path))
-    dir_name = os.path.dirname(pkl_file_path)
-    if not os.path.exists(dir_name):
-        os.makedirs(dir_name)
-
-    df.to_pickle(pkl_file_path)
-    print('p2k >>> DONE')
+    # save the dataframe to a pickle file for later use
+    save_path = os.path.abspath(pkl_filepath)
+    print(f'Saving pickle file at: {save_path}')
+    df.to_pickle(save_path)
 
     return df
 
@@ -508,6 +518,8 @@ def df2composite(df, value_name='paleoData_values', time_name='year',
                  bin_width=10,
                  gaussianize=False, standardize=False,
                  n_bootstraps=10000, stat_func=np.nanmean, nproc=8):
+    ''' Performs binning and averaging of the proxy timeseries, and bootstrap for uncertainty estimation
+    '''
     df_comp = pd.DataFrame(columns=['time', 'value', 'min', 'max', 'mean', 'median', 'bootstrap_stats'])
     df_comp.set_index('time', inplace=True)
 
@@ -916,8 +928,11 @@ def df_append_beta_mtm(df, psds=None, freqs=None, save_path=None, value_name='pa
     return df_new
 
 
-def calc_plot_psd(Xo, to, ntau=501, dcon=1e-3, label='PSD', standardize=False, anti_alias=False, plot_fig=True, method='Kirchner_f2py', nproc=8,
-                  period_ticks=[0.5, 1, 2, 5, 10, 20, 50, 100, 200], color=None):
+def calc_plot_psd(Xo, to, ntau=501, dcon=1e-3, standardize=False,
+                  anti_alias=False, plot_fig=True, method='Kirchner_f2py', nproc=8,
+                  period_ticks=[0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000], color=None,
+                  figsize=[10, 6], font_scale=2, lw=3, label='PSD', zorder=None,
+                  xlim=None, ylim=None, loc='upper right', bbox_to_anchor=None):
     if color is None:
         color = sns.xkcd_rgb['denim blue']
 
@@ -925,8 +940,24 @@ def calc_plot_psd(Xo, to, ntau=501, dcon=1e-3, label='PSD', standardize=False, a
     res_psd = Spectral.wwz_psd(Xo, to, freqs=None, tau=tau, c=dcon, standardize=standardize, nMC=0,
                                method=method, anti_alias=anti_alias, nproc=nproc)
     if plot_fig:
-        fig = Spectral.plot_psd(res_psd.psd, res_psd.freqs, plot_ar1=False, lmstyle='-o', color=color,
-                            period_ticks=period_ticks, linewidth=3, ar1_linewidth=3, label=label)
+        sns.set(style='ticks', font_scale=font_scale)
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.loglog(1/res_psd.freqs, res_psd.psd, lw=lw, color=color, label=label,
+                  zorder=zorder)
+        ax.set_xticks(period_ticks)
+        ax.get_xaxis().set_major_formatter(ScalarFormatter())
+        ax.xaxis.set_major_formatter(FormatStrFormatter('%g'))
+        ax.invert_xaxis()
+        ax.set_ylabel('Spectral Density')
+        ax.set_xlabel('Period (years)')
+
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        if ylim:
+            ax.set_ylim(ylim)
+        if xlim:
+            ax.set_xlim(xlim)
+        ax.legend(bbox_to_anchor=bbox_to_anchor, loc=loc, frameon=False)
         return fig, res_psd.psd, res_psd.freqs
     else:
         return res_psd.psd, res_psd.freqs
@@ -1118,8 +1149,9 @@ def plot_psds_dist(psds, freqs, archive_type='glacier ice',
 
 def plot_sites(df, title=None, lon_col='geo_meanLon', lat_col='geo_meanLat', archiveType_col='archiveType',
                title_size=20, title_weight='bold', figsize=[10, 8], projection=ccrs.Robinson(), markersize=50,
-               plot_legend=True, legend_ncol=4, legend_anchor=(0, -0.3), legend_fontsize=15, ax=None):
-    ''' Plot the location of the sites on a map.
+               plot_legend=True, legend_ncol=3, legend_anchor=(0, -0.4), legend_fontsize=15, frameon=False, ax=None):
+
+    ''' Plot the location of the sites on a map
 
     Args:
         df (Pandas DataFrame): the Pandas DataFrame
@@ -1143,10 +1175,13 @@ def plot_sites(df, title=None, lon_col='geo_meanLon', lat_col='geo_meanLat', arc
     ax.add_feature(cfeature.LAND, facecolor='gray', alpha=0.3)
     ax.gridlines(edgecolor='gray', linestyle=':')
 
+    # plot markers by archive types
     s_plots = []
+    type_names = []
     df_archiveType_set = np.unique(df[archiveType_col])
     for type_name in df_archiveType_set:
         selector = df[archiveType_col] == type_name
+        type_names.append(f'{type_name} (n={len(df[selector])})')
         s_plots.append(
             ax.scatter(
                 df[selector][lon_col], df[selector][lat_col], marker=p.markers_dict[type_name],
@@ -1154,17 +1189,19 @@ def plot_sites(df, title=None, lon_col='geo_meanLon', lat_col='geo_meanLat', arc
             )
         )
 
+    # plot legend
     if plot_legend:
-        # plot legend
-        lgnd = plt.legend(s_plots, df_archiveType_set,
-                          scatterpoints=1,
-                          bbox_to_anchor=legend_anchor,
-                          loc='lower left',
-                          ncol=legend_ncol,
-                          fontsize=legend_fontsize)
+        plt.legend(
+            s_plots, type_names,
+            scatterpoints=1,
+            bbox_to_anchor=legend_anchor,
+            loc='lower left',
+            ncol=legend_ncol,
+            frameon=frameon,
+            fontsize=legend_fontsize
+        )
 
     return ax
-
 
 def plot_beta_map(df_beta,
                   beta_I_name='beta_I', beta_I_title='Interannual Scaling Exponent',
@@ -1720,7 +1757,7 @@ def plot_composite(df, archive_type='coral',  title='', bin_width=10, lower_bd=1
     ax1.set_yticks(np.linspace(np.min(left_ylim), np.max(left_ylim), 5))
     ax1.set_xticks(np.linspace(np.min(xlim), np.max(xlim), 5))
     ax1.set_title(title, **title_font)
-    ax1.legend(loc=legend_loc)
+    ax1.legend(loc=legend_loc, frameon=False)
 
     ax2 = ax1.twinx()
     ax2.bar(ts, n_value, bin_width*0.9, color=num_rec_color, alpha=0.2)
@@ -1751,7 +1788,11 @@ def make_composite(df_proxy, inst_temp_path, fig_save_path=None,
                    ensemble_num=None,
                    left_ylim=[-2, 2], xlim=[0, 2000], right_ylim=[0, 80],
                    n_right_yticks=None):
+    ''' Make composites and plots from a given dataframe of proxy records.
+    '''
     n_records = df_proxy.shape[0]
+
+    # append the nearest observation to the dataframe of proxy records
     df_proxy_obs = df_append_nearest_obs(df_proxy, inst_temp_path,
                                          lat_name=netcdf_lat_name,
                                          lon_name=netcdf_lon_name,
@@ -1759,13 +1800,17 @@ def make_composite(df_proxy, inst_temp_path, fig_save_path=None,
                                          temp_name=netcdf_temp_name,
                                          ensemble_num=ensemble_num,
                                          )
+
+    # make composites of the proxy records
     df_comp_proxy = df2composite(df_proxy_obs, bin_width=bin_width, stat_func=stat_func,
                                  gaussianize=True, standardize=True,
                                  n_bootstraps=n_bootstraps)
-    df_comp_obs = df2composite(df_proxy_obs, bin_width=bin_width, stat_func=stat_func,
-                               value_name='obs_temp', time_name='obs_year',
-                               gaussianize=False, standardize=False,
-                               n_bootstraps=n_bootstraps)
+    #  df_comp_obs = df2composite(df_proxy_obs, bin_width=bin_width, stat_func=stat_func,
+    #                             value_name='obs_temp', time_name='obs_year',
+    #                             gaussianize=False, standardize=False,
+    #                             n_bootstraps=n_bootstraps)
+
+    # calculate the linear regression statistics
     ys_proxy, ts_proxy, ys_obs, ts_obs, intercept, slope, R2 = df2comp_ols(df_proxy, inst_temp_path,
                                                                            netcdf_lat_name=netcdf_lat_name,
                                                                            netcdf_lon_name=netcdf_lon_name,
@@ -1774,8 +1819,11 @@ def make_composite(df_proxy, inst_temp_path, fig_save_path=None,
                                                                            ensemble_num=ensemble_num,
                                                                            stat_func=stat_func,
                                                                            bin_width=bin_width)
+
+    # bin the observation timeseires, for plotting purposes
     bin_target_ys, bin_target_ts = bin_ts(ys_obs, ts_obs, bin_width=bin_width)
 
+    # plot
     fig = plot_composite(df_comp_proxy, archive_type=archive_type, R2=R2, stat_func=stat_func,
                          slope=slope, intercept=intercept,
                          plot_target=True, target_ys=ys_obs, target_ts=ts_obs,
@@ -1789,4 +1837,3 @@ def make_composite(df_proxy, inst_temp_path, fig_save_path=None,
 
     else:
         return ys_proxy, ts_proxy, slope, R2, fig
-
