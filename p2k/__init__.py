@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 __author__ = 'Feng Zhu'
 __email__ = 'fengzhu@usc.edu'
-__version__ = '0.4.1'
+__version__ = '0.4.2'
 
 import os
-import lipd
 import pandas as pd
 import numpy as np
 from scipy import spatial
@@ -86,6 +85,7 @@ def lipd2df(lipd_dirpath, pkl_filepath, col_str=[
     Returns:
         df (Pandas DataFrame): the converted Pandas DataFrame
     '''
+    import lipd
 
     # save the current working directory for later use, as the LiPD utility will change it in the background
     work_dir = os.getcwd()

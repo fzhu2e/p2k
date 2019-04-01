@@ -40,7 +40,7 @@ def forward(proxy, lat_obs, lon_obs, lat_model, lon_model, time_model,
         lat_ind, lon_ind = p2k.find_closest_loc(lat_model, lon_model, lat_obs, lon_obs, mode='mesh')
         print('p2k >>> Target: ({}, {}) >>> Found: ({}, {})'.format(
             lat_obs, lon_obs, lat_model[lat_ind, lon_ind], lon_model[lat_ind, lon_ind]))
-    
+
         pseudo_value = np.asarray(d18Ocoral[:, lat_ind, lon_ind])
         pseudo_value[pseudo_value>1e5] = np.nan  # replace missing values with nan
         while np.all(np.isnan(pseudo_value)):
