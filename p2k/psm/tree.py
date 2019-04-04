@@ -9,7 +9,7 @@ import rpy2.robjects as ro
 rpy2.robjects.numpy2ri.activate()
 
 def vslite(syear, eyear, phi, T, P, T1=8, T2=23, M1=0.01, M2=0.05, Mmax=0.76, Mmin=0.01,
-    normalize=True, return_details=False,
+    normalize=True,
     alph=0.093, m_th=4.886, mu_th=5.8, rootd=1000, M0=0.2, substep=0, I_0=1, I_f=12, hydroclim="P",
     Rlib_path='/Library/Frameworks/R.framework/Versions/3.4/Resources/library'):
 
@@ -67,8 +67,6 @@ def vslite(syear, eyear, phi, T, P, T1=8, T2=23, M1=0.01, M2=0.05, Mmax=0.76, Mm
     nyr = eyear - syear + 1
     T_model = T.reshape((nyr, 12)).T - 273.15  # in monthly temperatures (degC)
     P_model = P.reshape((nyr, 12)).T * 3600*24*30  # in accumulated monthly precipitation (mm)
-    # the input P is in kg/m2/s, and 1 kg of rain over 1 m2 is 1 mm in
-    # thickness, so 1 kg/m2/s = 60x60x24 mm/day
 
     res = VSLiteR.VSLite(syear, eyear, phi, T_model, P_model, T1=T1, T2=T2, M1=M1, Mmax=Mmax, Mmin=Mmin,
                          alph=alph, m_th=m_th, mu_th=mu_th, rootd=rootd, M0=M0, substep=substep,
@@ -81,10 +79,7 @@ def vslite(syear, eyear, phi, T, P, T1=8, T2=23, M1=0.01, M2=0.05, Mmax=0.76, Mm
     else:
         trw = np.asarray(res['trw_org'])
 
-    if return_details:
-        return res
-    else:
-        return trw
+    return trw
 
 
 def cellulose_sensor(t, T, P, RH, d18Os, d18Op, d18Ov, flag=1.0, iso=True):

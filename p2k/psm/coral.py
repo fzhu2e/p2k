@@ -6,7 +6,7 @@
 # Modified 11_17_2015 <sylvia_dee@brown.edu>
 #====================================================================
 
-def pseudocoral(lat, lon, SST, SSS, d18O=-1, species="default",
+def pseudocoral(lat, lon, SST, SSS, d18O=None, species="default",
                 b1=0.3007062, b2=0.2619054, b3=0.436509, b4=0.1552032, b5=0.15):
 
     """
@@ -16,19 +16,19 @@ def pseudocoral(lat, lon, SST, SSS, d18O=-1, species="default",
        Comparison of observed and simulated tropical climate trends using a forward
        model of coral \u03b418O, Geophys.Res.Lett., 38, L14706, doi:10.1029/2011GL048224.>
        Returns a numpy array that is the same size and shape as the input vectors for SST, SSS.
-    
+
     Input parameters:
         Latitude    [lat]       [-90, 90]
         Longitude   [lon]       [0, 360]
         SST         [SST]       SST ANOMALY Units = degrees Celsius
         SSS         [SSS]       SSS ANOMALY Units = PSU
         Please note that input files must be read in as 1-D vectors.
-        
+
     Output:
         Returns a Numpy Array, ['coral'], which is saved in the main program.
         Optional Inputs: Please note that the function will use default params for
         d18O vs. SSS, a, and b unless specified and placed in the appropriate location as shown below.
-        delta_18O [permil]: If the user does not have an input field for d18O, you must put -1 in its 
+        delta_18O [permil]: If the user does not have an input field for d18O, you must put -1 in its
         position in the call and use the equation for SSS below.
         **Note: [always use d18O (seawater) if available!]**
         The user may specify values for parameters a and b in the coral d18O forward model,
@@ -36,7 +36,7 @@ def pseudocoral(lat, lon, SST, SSS, d18O=-1, species="default",
         a = coral - SST regression, accounting for species-dependent variations in the SST-18O dependence.
         The code assigns this value universally at -.22, but published values vary by species/genus (i.e. Moses, 2006)
         Specify keyword input 'species=' to set slope:
-        species = 
+        species =
                 "Default":      a = -0.22
                 "Porites_sp":   a = -.26178
                 "Porites_lob":  a = -.19646
@@ -60,8 +60,8 @@ def pseudocoral(lat, lon, SST, SSS, d18O=-1, species="default",
 
 
 # Define slope of coral response to SST, a
-    #Also, have you considered accounting for species-dependent variations in the a1 value (the SST-18O dependence)? 
-    #The code assigns this value universally at -.22, but published values vary by species/genus (i.e. Moses, 2006). 
+    #Also, have you considered accounting for species-dependent variations in the a1 value (the SST-18O dependence)?
+    #The code assigns this value universally at -.22, but published values vary by species/genus (i.e. Moses, 2006).
     #I've copied and pasted a chunk of code from one of my scripts that does this brute-force... Hope it helps.
 
     if species == "Porites_sp":
@@ -101,7 +101,7 @@ def pseudocoral(lat, lon, SST, SSS, d18O=-1, species="default",
         b=slope1
     elif lon<=120.:              # Indian Ocean
         b=slope4
-    elif lon>=270. and lat>=10.:    #Tropical Atlantic ~300 E longitude 
+    elif lon>=270. and lat>=10.:    #Tropical Atlantic ~300 E longitude
         b=slope5
     elif lat> -5. and lat<=13.:   # Tropical Pacific
         b=slope2
@@ -114,7 +114,7 @@ def pseudocoral(lat, lon, SST, SSS, d18O=-1, species="default",
 
 # Form an array of pseudocoral data
 
-    if d18O == -1:
+    if d18O is None:
         coral = a*SST+b*SSS
     else:
         coral = a*SST + d18O
