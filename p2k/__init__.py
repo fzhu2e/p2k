@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 __author__ = 'Feng Zhu'
 __email__ = 'fengzhu@usc.edu'
-__version__ = '0.4.2'
+__version__ = '0.4.3'
 
 import os
 import pandas as pd
@@ -245,7 +245,10 @@ def load_netCDF4(path, var_list):
 
         else:
             if var is 'lon':
-                field = np.asarray(ncfile.variables[var]) - 180  # make the longitude consistent with PAGES2k
+                if np.min(ncfile.variables[var]) >= 0:
+                    field = np.mod(ncfile.variables[var]+180, 360) - 180  # convert from range (0, 360) to (-180, 180)
+                else:
+                    field = np.asarray(ncfile.variables[var])
             elif var is 'lat':
                 field = np.asarray(ncfile.variables[var])
             else:
@@ -299,8 +302,8 @@ def load_CESM_netcdf(path, var_list, decode_times=False):
             var_fields.append(year)
 
         else:
-            if var is 'lon':
-                field = handle[var].values - 180  # make the longitude consistent with PAGES2k
+            if var is 'lon' and np.min(handle[var].values) >= 0:
+                field = np.mod(handle[var].values+180, 360) - 180  # convert from range (0, 360) to (-180, 180)
             else:
                 field = handle[var].values
 
