@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 __author__ = 'Feng Zhu'
 __email__ = 'fengzhu@usc.edu'
-__version__ = '0.4.3'
+__version__ = '0.4.4'
 
 import os
 import pandas as pd
@@ -129,7 +129,7 @@ def lipd2df(lipd_dirpath, pkl_filepath, col_str=[
     return df
 
 
-def find_closest_loc(lat, lon, target_lat, target_lon, mode='latlon'):
+def find_closest_loc(lat, lon, target_lat, target_lon, mode='latlon', verbose=False):
     ''' Find the closet model sites (lat, lon) based on the given target (lat, lon) list
 
     Args:
@@ -155,6 +155,10 @@ def find_closest_loc(lat, lon, target_lat, target_lon, mode='latlon'):
         model_lat = lat.flatten()
         model_lon = lon.flatten()
 
+    elif mode is 'list':
+        model_lat = lat
+        model_lon = lon
+
     model_locations = []
 
     for m_lat, m_lon in zip(model_lat, model_lon):
@@ -174,7 +178,7 @@ def find_closest_loc(lat, lon, target_lat, target_lon, mode='latlon'):
     lon_ind = np.zeros(n_loc, dtype=int)
 
     # get the closest grid
-    for i, target_loc in enumerate(target_locations):
+    for i, target_loc in (enumerate(tqdm(target_locations)) if verbose else enumerate(target_locations)):
         X = target_loc
         Y = model_locations
         distance, index = spatial.KDTree(Y).query(X)
