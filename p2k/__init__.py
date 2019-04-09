@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 __author__ = 'Feng Zhu'
 __email__ = 'fengzhu@usc.edu'
-__version__ = '0.4.4'
+__version__ = '0.4.5'
 
 import os
 import pandas as pd
@@ -30,8 +30,6 @@ import pickle
 import warnings
 
 from pyleoclim import Spectral, Timeseries
-
-from . import psm
 
 
 class PAGES2k(object):
