@@ -127,7 +127,7 @@ def lipd2df(lipd_dirpath, pkl_filepath, col_str=[
     return df
 
 
-def find_closest_loc(lat, lon, target_lat, target_lon, mode='latlon', verbose=False):
+def find_closest_loc(lat, lon, target_lat, target_lon, mode=None, verbose=False):
     ''' Find the closet model sites (lat, lon) based on the given target (lat, lon) list
 
     Args:
@@ -141,6 +141,14 @@ def find_closest_loc(lat, lon, target_lat, target_lon, mode='latlon', verbose=Fa
         lat_ind, lon_ind (array): the indices of the found closest model sites
 
     '''
+
+    if mode is None:
+        if len(np.shape(lat)) == 1:
+            mode = 'latlon'
+        elif len(np.shape(lat)) == 2:
+            mode = 'mesh'
+        else:
+            raise ValueError('ERROR: The shape of the lat/lon cannot be processed !!!')
 
     if mode is 'latlon':
         # model locations
@@ -1207,6 +1215,7 @@ def plot_sites(df, title=None, lon_col='geo_meanLon', lat_col='geo_meanLat', arc
         )
 
     return ax
+
 
 def plot_beta_map(df_beta,
                   beta_I_name='beta_I', beta_I_title='Interannual Scaling Exponent',
